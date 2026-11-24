@@ -1,292 +1,543 @@
+import io
 import os
 import re
-import time
+import json
 import uuid
-import datetime
+import xml.etree.ElementTree as ET
+from datetime import datetime, timezone, timedelta
+from fastapi import FastAPI, Request, Response
 import httpx
 import edge_tts
-from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, JSONResponse
+from gtts import gTTS
 
 app = FastAPI()
 
-AUDIO_DIR = "/tmp/tts_audio"
-os.makedirs(AUDIO_DIR, exist_ok=True)
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
 
-RAW_KEYS = [
-    k.strip()
-    for k in (
-        os.getenv("GROQ_API_KEY", "") + "," + os.getenv("GROQ_API_KEY_2", "")
-    ).split(",")
-    if k.strip()
+NAAT_STREAMS = [
+    "https://stream.zeno.fm/0r0xa792kwzuv",
+    "https://stream.zeno.fm/4c2x9m8z3v8uv",
+    "http://stream.zeno.fm/0r0xa792kwzuv",
 ]
 
-GROQ_MODELS = [
-    "llama-3.1-8b-instant",
-    "meta-llama/llama-4-scout-17b-16e-instruct",
-    "qwen/qwen3-32b",
-    "openai/gpt-oss-20b",
-    "openai/gpt-oss-120b",
+MUSIC_STREAMS = [
+    "https://stream.zeno.fm/rqqps63h4k8uv",
+    "https://stream.zeno.fm/f3wvbbtr7g8uv",
+    "http://stream.zeno.fm/rqqps63h4k8uv",
 ]
 
-STATE = {
-    "voice": "UR-M",
-    "speed": "Norm",
+VOICES = {
+    "ur_male":   {"tts": "ur-PK-AsadNeural",     "ar": "ar-SA-HamedNeural",   "stt": "ur", "label": "UR-M"},
+    "ur_female": {"tts": "ur-PK-UzmaNeural",     "ar": "ar-SA-ZariyahNeural", "stt": "ur", "label": "UR-F"},
+    "hi_male":   {"tts": "hi-IN-MadhurNeural",   "ar": "ar-SA-HamedNeural",   "stt": "hi", "label": "HI-M"},
+    "hi_female": {"tts": "hi-IN-SwaraNeural",    "ar": "ar-SA-ZariyahNeural", "stt": "hi", "label": "HI-F"},
+    "en_male":   {"tts": "en-IN-PrabhatNeural",  "ar": "ar-SA-HamedNeural",   "stt": "en", "label": "EN-M"},
+    "en_female": {"tts": "en-IN-NeerjaNeural",   "ar": "ar-SA-ZariyahNeural", "stt": "en", "label": "EN-F"},
+}
+
+state = {
+    "voice": "ur_male",
+    "rate": "+0%",
+    "speed_label": "Norm",
     "volume": 13,
+    "history": []
 }
 
-VOICE_MAP = {
-    "UR-M": "ur-PK-AsadNeural",
-    "UR-F": "ur-PK-UzmaNeural",
-    "HI-M": "hi-IN-MadhurNeural",
-    "HI-F": "hi-IN-SwaraNeural",
-    "EN-M": "en-US-GuyNeural",
-    "EN-F": "en-US-JennyNeural",
-}
-
-SPEED_MAP = {
-    "Slow": "-20%",
-    "Norm": "+0%",
-    "Fast": "+20%",
-}
-
-MEEQAT_ANCHORS = [
-    (1,  1,  (6, 8),  (7, 37), (12, 35), (15, 55), (17, 36), (19, 1)),
-    (1,  15, (6, 10), (7, 36), (12, 41), (16, 8),  (17, 48), (19, 12)),
-    (2,  1,  (6, 3),  (7, 29), (12, 45), (16, 23), (18, 4),  (19, 27)),
-    (2,  15, (5, 53), (7, 18), (12, 45), (16, 36), (18, 17), (19, 38)),
-    (2,  28, (5, 40), (7, 3),  (12, 44), (16, 46), (18, 29), (19, 49)),
-    (3,  1,  (5, 38), (7, 1),  (12, 44), (16, 47), (18, 30), (19, 50)),
-    (3,  15, (5, 19), (6, 43), (12, 40), (16, 57), (18, 41), (20, 2)),
-    (3,  31, (4, 56), (6, 21), (12, 36), (17, 5),  (18, 54), (20, 16)),
-    (4,  1,  (4, 55), (6, 19), (12, 35), (17, 5),  (18, 54), (20, 16)),
-    (4,  15, (4, 33), (6, 1),  (12, 32), (17, 11), (19, 5),  (20, 30)),
-    (4,  30, (4, 13), (5, 44), (12, 28), (17, 17), (19, 16), (20, 45)),
-    (5,  1,  (4, 12), (5, 43), (12, 28), (17, 17), (19, 17), (20, 47)),
-    (5,  15, (3, 54), (5, 30), (12, 27), (17, 21), (19, 28), (21, 2)),
-    (5,  31, (3, 39), (5, 22), (12, 27), (17, 27), (19, 39), (21, 18)),
-    (6,  1,  (3, 39), (5, 21), (12, 29), (17, 28), (19, 40), (21, 19)),
-    (6,  15, (3, 36), (5, 19), (12, 31), (17, 31), (19, 46), (21, 28)),
-    (6,  30, (3, 39), (5, 23), (12, 35), (17, 35), (19, 50), (21, 31)),
-    (7,  1,  (3, 39), (5, 23), (12, 35), (17, 35), (19, 50), (21, 31)),
-    (7,  15, (3, 50), (5, 30), (12, 37), (17, 35), (19, 46), (21, 25)),
-    (7,  31, (4, 6),  (5, 41), (12, 37), (17, 31), (19, 37), (21, 11)),
-    (8,  1,  (4, 7),  (5, 42), (12, 37), (17, 32), (19, 36), (21, 9)),
-    (8,  15, (4, 22), (5, 52), (12, 36), (17, 23), (19, 22), (20, 51)),
-    (8,  31, (4, 36), (6, 3),  (12, 34), (17, 11), (19, 4),  (20, 28)),
-    (9,  1,  (4, 39), (6, 4),  (12, 31), (17, 9),  (19, 1),  (20, 24)),
-    (9,  15, (4, 50), (6, 12), (12, 26), (16, 54), (18, 43), (20, 5)),
-    (9,  30, (5, 2),  (6, 24), (12, 21), (16, 36), (18, 21), (19, 41)),
-    (10, 1,  (5, 3),  (6, 25), (12, 21), (16, 35), (18, 19), (19, 40)),
-    (10, 15, (5, 14), (6, 35), (12, 17), (16, 19), (18, 1),  (19, 22)),
-    (10, 31, (5, 26), (6, 49), (12, 15), (16, 2),  (17, 43), (19, 5)),
-    (11, 1,  (5, 27), (6, 50), (12, 15), (16, 2),  (17, 42), (19, 4)),
-    (11, 15, (5, 38), (7, 3),  (12, 16), (15, 51), (17, 32), (18, 56)),
-    (11, 24, (5, 46), (7, 11), (12, 18), (15, 47), (17, 27), (18, 51)),
-    (11, 30, (5, 50), (7, 16), (12, 20), (15, 45), (17, 26), (18, 50)),
-    (12, 1,  (5, 51), (7, 17), (12, 20), (15, 45), (17, 26), (18, 50)),
-    (12, 15, (6, 0),  (7, 30), (12, 26), (15, 46), (17, 27), (18, 52)),
-    (12, 31, (6, 8),  (7, 37), (12, 34), (15, 53), (17, 35), (19, 0)),
-]
-
-DAYS_BEFORE = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334]
+audio_cache = {}
+MAX_CACHE = 6
 
 
-def get_ist_now() -> datetime.datetime:
-    return datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5, minutes=30)))
+def get_ist_time() -> str:
+    ist = timezone(timedelta(hours=5, minutes=30))
+    return datetime.now(ist).strftime("%I:%M %p, %A, %d %B %Y (IST)")
 
 
-def fmt_12_short(mins: int) -> str:
-    mins = max(0, min(1439, int(round(mins))))
-    h24, m = divmod(mins, 60)
-    h12 = h24 % 12 or 12
-    return f"{h12}:{m:02d}"
-
-
-def get_today_meeqat():
-    now = get_ist_now()
-    target = DAYS_BEFORE[now.month - 1] + now.day
-    for i in range(len(MEEQAT_ANCHORS) - 1):
-        m1, d1, f1, sr1, z1, a1, mg1, e1 = MEEQAT_ANCHORS[i]
-        m2, d2, f2, sr2, z2, a2, mg2, e2 = MEEQAT_ANCHORS[i + 1]
-        dy1 = DAYS_BEFORE[m1 - 1] + d1
-        dy2 = DAYS_BEFORE[m2 - 1] + d2
-        if dy1 <= target <= dy2:
-            r = 0.0 if dy2 == dy1 else (target - dy1) / (dy2 - dy1)
-            vals = []
-            for p1, p2 in [(f1, f2), (sr1, sr2), (z1, z2), (a1, a2), (mg1, mg2), (e1, e2)]:
-                t1 = p1[0] * 60 + p1[1]
-                t2 = p2[0] * 60 + p2[1]
-                vals.append(int(round(t1 + r * (t2 - t1))))
-            return vals
-    last = MEEQAT_ANCHORS[-1]
-    return [p[0] * 60 + p[1] for p in last[2:]]
-
-
-def build_namaz_name_time_text() -> str:
-    f, sr, z, a, mg, e = get_today_meeqat()
-    return (
-        f"Fajr. {fmt_12_short(f)}. "
-        f"Zohar. {fmt_12_short(z)}. "
-        f"Asar. {fmt_12_short(a)}. "
-        f"Maghrib. {fmt_12_short(mg)}. "
-        f"Esha. {fmt_12_short(e)}."
-    )
-
-
-async def make_tts(text: str) -> str:
-    fid = uuid.uuid4().hex[:10]
-    out_path = os.path.join(AUDIO_DIR, f"{fid}.mp3")
-    voice = VOICE_MAP.get(STATE["voice"], "ur-PK-AsadNeural")
-    rate = SPEED_MAP.get(STATE["speed"], "+0%")
-    clean_text = re.sub(r"[*_#`~]+", "", text).strip() or "Ji bataiye."
-    comm = edge_tts.Communicate(clean_text, voice=voice, rate=rate)
-    await comm.save(out_path)
-    now_t = time.time()
-    for fn in os.listdir(AUDIO_DIR):
-        fp = os.path.join(AUDIO_DIR, fn)
-        try:
-            if os.path.isfile(fp) and now_t - os.path.getmtime(fp) > 300:
-                os.remove(fp)
-        except Exception:
-            pass
-    return f"/audio/{fid}"
-
-
-async def transcribe_wav(wav_bytes: bytes) -> str:
-    if not RAW_KEYS:
+def clean_ascii(text: str) -> str:
+    if not text:
         return ""
-    for key in RAW_KEYS:
-        try:
-            async with httpx.AsyncClient(timeout=20.0) as client:
-                files = {"file": ("audio.wav", wav_bytes, "audio/wav")}
-                data = {"model": "whisper-large-v3-turbo"}
-                resp = await client.post(
-                    "https://api.groq.com/openai/v1/audio/transcriptions",
-                    headers={"Authorization": f"Bearer {key}"},
-                    files=files,
-                    data=data,
+    repl = {
+        "\u2010": "-", "\u2011": "-", "\u2012": "-", "\u2013": "-", "\u2014": " - ",
+        "\u2018": "'", "\u2019": "'", "\u201c": "", "\u201d": "", "\u2026": "...",
+        "\u00b7": "-", "\u2022": "-"
+    }
+    for k, v in repl.items():
+        text = text.replace(k, v)
+    out = "".join(ch if 32 <= ord(ch) <= 126 else " " for ch in text)
+    return re.sub(r"\s+", " ", out).strip()
+
+
+def weather_code_desc(code: int) -> str:
+    mapping = {
+        0: "saaf aasman",
+        1: "zyada tar saaf",
+        2: "halkay badal",
+        3: "ghane badal",
+        45: "kohra / dhund",
+        48: "ghana kohra",
+        51: "halki boonda baandi",
+        53: "darmiyani boonda baandi",
+        61: "halki barish",
+        63: "darmiyani barish",
+        65: "tez barish",
+        71: "halki barfbari",
+        73: "darmiyani barfbari",
+        75: "tez barfbari",
+        80: "barish ke jhonkay",
+        95: "garaj chamak ke saath barish",
+    }
+    return mapping.get(code, f"code {code}")
+
+
+async def fetch_live_weather(city: str = "Srinagar") -> str:
+    q = (city or "Srinagar").strip()
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            geo = await client.get(
+                "https://geocoding-api.open-meteo.com/v1/search",
+                params={"name": q, "count": 1, "language": "en", "format": "json"}
+            )
+            gdata = geo.json()
+            if not gdata.get("results"):
+                geo = await client.get(
+                    "https://geocoding-api.open-meteo.com/v1/search",
+                    params={"name": "Srinagar", "count": 1, "language": "en", "format": "json"}
                 )
-                if resp.status_code == 200:
-                    return (resp.json().get("text") or "").strip()
-                print(f"Whisper failed ({resp.status_code}): {resp.text[:160]}")
-        except Exception as e:
-            print(f"Whisper error: {e}")
-    return ""
+                gdata = geo.json()
+            if not gdata.get("results"):
+                return ""
+            loc = gdata["results"][0]
+            lat = loc["latitude"]
+            lon = loc["longitude"]
+            cname = loc.get("name", q)
+
+            w = await client.get(
+                "https://api.open-meteo.com/v1/forecast",
+                params={
+                    "latitude": lat,
+                    "longitude": lon,
+                    "current": "temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m",
+                    "timezone": "Asia/Kolkata"
+                }
+            )
+            cur = w.json().get("current", {})
+            temp = cur.get("temperature_2m")
+            feels = cur.get("apparent_temperature")
+            hum = cur.get("relative_humidity_2m")
+            wind = cur.get("wind_speed_10m")
+            desc = weather_code_desc(int(cur.get("weather_code", 0)))
+            return (
+                f"Live weather in {cname}: {temp} C (feels like {feels} C), "
+                f"condition: {desc}, humidity: {hum}%, wind: {wind} km/h."
+            )
+    except Exception as e:
+        print("Weather fetch error:", repr(e))
+        return ""
 
 
-async def ask_llm(user_text: str) -> str:
-    now = get_ist_now()
-    low = user_text.lower()
-    if any(w in low for w in ["namaz", "nimaz", "meeqat", "miqat", "fajr", "zohar", "asar", "maghrib", "esha", "isha", "prayer"]):
-        return build_namaz_name_time_text()
+async def fetch_rss_headlines(url: str, limit: int = 5) -> list[str]:
+    items = []
+    try:
+        async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:
+            r = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
+            if r.status_code == 200:
+                root = ET.fromstring(r.text)
+                for item in root.findall(".//item")[:limit]:
+                    title_el = item.find("title")
+                    if title_el is not None and title_el.text:
+                        t = re.sub(r"\s+", " ", title_el.text).strip()
+                        if t:
+                            items.append(t)
+    except Exception as e:
+        print("RSS error:", repr(e))
+    return items
 
-    sys_prompt = (
-        f"You are a helpful voice assistant in Srinagar, Kashmir. "
-        f"Current date & time: {now.strftime('%d %b %Y, %I:%M %p')}. "
-        f"Reply concisely in Roman Urdu/Hindi in 2 short sentences. No markdown or symbols."
-    )
 
-    for key in RAW_KEYS:
-        for model in GROQ_MODELS:
+async def fetch_live_cricket() -> str:
+    lines = []
+    try:
+        async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:
+            r = await client.get(
+                "https://site.api.espn.com/apis/site/v2/sports/cricket/scoreboard",
+                headers={"User-Agent": "Mozilla/5.0"}
+            )
+            if r.status_code == 200:
+                data = r.json()
+                for ev in data.get("events", [])[:6]:
+                    name = ev.get("name", "")
+                    status_txt = ev.get("status", {}).get("type", {}).get("detail", "")
+                    comps = ev.get("competitions", [{}])[0].get("competitors", [])
+                    scores = []
+                    for c in comps:
+                        tname = c.get("team", {}).get("shortDisplayName") or c.get("team", {}).get("displayName", "")
+                        sc = c.get("score", "")
+                        if tname:
+                            scores.append(f"{tname} {sc}".strip())
+                    summary = f"{name} | {' vs '.join(scores)} | {status_txt}".strip(" |")
+                    if summary:
+                        lines.append(summary)
+    except Exception as e:
+        print("ESPN cricket feed error:", repr(e))
+
+    if not lines:
+        rss = await fetch_rss_headlines("https://feeds.bbci.co.uk/sport/cricket/rss.xml", 4)
+        lines.extend(rss)
+
+    if not lines:
+        return "NO_LIVE_CRICKET_FEED"
+    return "Live cricket scoreboard feed: " + " || ".join(lines)
+
+
+async def fetch_live_news() -> str:
+    headlines = await fetch_rss_headlines("https://feeds.bbci.co.uk/news/world/asia/india/rss.xml", 4)
+    if not headlines:
+        headlines = await fetch_rss_headlines("https://feeds.bbci.co.uk/news/world/rss.xml", 4)
+    if not headlines:
+        return ""
+    return "Latest news headlines: " + " | ".join(headlines)
+
+
+async def pick_working_stream(urls: list[str]) -> str:
+    async with httpx.AsyncClient(timeout=6.0, follow_redirects=True) as client:
+        for u in urls:
             try:
-                async with httpx.AsyncClient(timeout=18.0) as client:
-                    resp = await client.post(
-                        "https://api.groq.com/openai/v1/chat/completions",
-                        headers={
-                            "Authorization": f"Bearer {key}",
-                            "Content-Type": "application/json",
-                        },
-                        json={
-                            "model": model,
-                            "messages": [
-                                {"role": "system", "content": sys_prompt},
-                                {"role": "user", "content": user_text},
-                            ],
-                            "max_tokens": 140,
-                            "temperature": 0.4,
-                        },
-                    )
-                    if resp.status_code == 200:
-                        ans = resp.json()["choices"][0]["message"]["content"].strip()
-                        ans = re.sub(r"<think>.*?</think>", "", ans, flags=re.S).strip()
-                        return ans
-                    print(f"Model {model} failed ({resp.status_code}): {resp.text[:160]}")
-            except Exception as ex:
-                print(f"Model {model} exception: {ex}")
+                r = await client.get(u, headers={"Range": "bytes=0-1024", "User-Agent": "Mozilla/5.0"})
+                if r.status_code in (200, 206):
+                    return str(r.url)
+            except Exception:
+                continue
+    return urls[0]
 
-    return "Server abhi busy hai, thodi der baad koshish karein."
+
+async def synth_edge_segment(text: str, voice_name: str, rate: str) -> bytes:
+    buf = bytearray()
+    comm = edge_tts.Communicate(text=text, voice=voice_name, rate=rate)
+    async for chunk in comm.stream():
+        if chunk["type"] == "audio":
+            buf.extend(chunk["data"])
+    return bytes(buf)
+
+
+async def generate_mp3(speak_text: str, voice_key: str, rate: str) -> bytes:
+    vcfg = VOICES.get(voice_key, VOICES["ur_male"])
+    parts = re.split(r"(\[AR:[^\]]+\])", speak_text)
+    full_mp3 = bytearray()
+
+    try:
+        for p in parts:
+            p = p.strip()
+            if not p:
+                continue
+            if p.startswith("[AR:") and p.endswith("]"):
+                ar_inner = p[4:-1].split("|")[0].strip()
+                if ar_inner:
+                    seg = await synth_edge_segment(ar_inner, vcfg["ar"], rate)
+                    full_mp3.extend(seg)
+            else:
+                seg = await synth_edge_segment(p, vcfg["tts"], rate)
+                full_mp3.extend(seg)
+
+        if len(full_mp3) > 400:
+            return bytes(full_mp3)
+    except Exception as e:
+        print("Edge-TTS error, falling back to gTTS:", repr(e))
+
+    plain = re.sub(r"\[AR:([^\]|]+)(?:\|[^\]]+)?\]", r"\1", speak_text)
+    lang_code = vcfg["stt"]
+    fp = io.BytesIO()
+    gTTS(text=plain, lang=lang_code).write_to_fp(fp)
+    return fp.getvalue()
+
+
+def store_audio(mp3_bytes: bytes) -> str:
+    aid = uuid.uuid4().hex[:10]
+    audio_cache[aid] = mp3_bytes
+    while len(audio_cache) > MAX_CACHE:
+        oldest = next(iter(audio_cache))
+        audio_cache.pop(oldest, None)
+    return f"/audio/{aid}"
+
+
+async def transcribe_wav(wav_bytes: bytes, stt_lang: str) -> str:
+    prompt_text = (
+        "Aaj kis cricket ka match hai, live score, weather mausam Srinagar, news, "
+        "Quran tafseer, volume set karo, volume badhao, stop, Urdu voice, Hindi voice, English voice."
+    )
+    headers = {"Authorization": f"Bearer {GROQ_API_KEY}"}
+    files = {"file": ("speech.wav", wav_bytes, "audio/wav")}
+    data = {
+        "model": "whisper-large-v3-turbo",
+        "prompt": prompt_text,
+        "response_format": "json"
+    }
+    async with httpx.AsyncClient(timeout=25.0) as client:
+        r = await client.post("https://api.groq.com/openai/v1/audio/transcriptions", headers=headers, data=data, files=files)
+        if r.status_code != 200:
+            print("Whisper Error:", r.status_code, r.text)
+            return ""
+        return r.json().get("text", "").strip()
+
+
+async def ask_llm(user_text: str, live_context: str = "") -> dict:
+    vkey = state["voice"]
+    if vkey.startswith("ur"):
+        lang_rule = (
+            "Write 'speak' in PURE, NATURAL, EVERYDAY SPOKEN URDU using Urdu script (Nastaliq UTF-8). "
+            "Write 'display' in clear, complete ASCII Roman Urdu/English sentences separated by periods (.) so each sentence shows cleanly one after another on OLED."
+        )
+    elif vkey.startswith("hi"):
+        lang_rule = (
+            "Write 'speak' in natural everyday Hindi using Devanagari script. "
+            "Write 'display' in clear, complete ASCII Roman Hindi sentences separated by periods (.)."
+        )
+    else:
+        lang_rule = (
+            "Write both 'speak' and 'display' in clear, natural, complete English sentences separated by periods (.)."
+        )
+
+    live_block = f"\nLIVE FETCHED DATA:\n{live_context}\n" if live_context else ""
+
+    system_prompt = f"""You are a highly accurate, direct AI voice assistant in Srinagar, India.
+Current local time: {get_ist_time()}.
+Active settings: voice={vkey}, volume={state['volume']}/18, speed={state['speed_label']}.
+{live_block}
+Respond ONLY with a valid JSON object containing exact keys: "cmd", "speak", "display".
+
+1) COMMANDS (set "cmd" ONLY when explicitly requested; otherwise "cmd": ""):
+- Quran Tilawat / recitation ONLY: "QURAN:XXX" (3-digit Surah 001-114). NEVER use QURAN for Tafseer (تفسیر), Tarjuma (ترجمہ), meaning, or explanation!
+- Naat stream: "RADIO_NAAT"
+- Music stream: "RADIO_MUSIC"
+- Stop playback: "STOP"
+- Volume: "VOL:UP", "VOL:DOWN", "VOL:SET:NN" (0-18), "VOL:MUTE"
+- Voice: "VOICE:UR_MALE", "VOICE:UR_FEMALE", "VOICE:HI_MALE", "VOICE:HI_FEMALE", "VOICE:EN_MALE", "VOICE:EN_FEMALE"
+- Speed: "SPEED:SLOW", "SPEED:FAST", "SPEED:NORMAL"
+- Clear memory: "CLEAR_MEM"
+
+2) STRICT ACCURACY & RELEVANCE RULES:
+- {lang_rule}
+- Directly answer the EXACT question asked by the user. Never give rankings or unrelated facts when asked about live matches/scores.
+- If LIVE FETCHED DATA contains "NO_LIVE_CRICKET_FEED", explicitly say that live match/score feed is not available right now—NEVER guess or invent scores/matches.
+- If LIVE FETCHED DATA has actual matches/scores/weather/news, report only what is present in LIVE FETCHED DATA accurately.
+- For Quran Tafseer, Islamic topics, science, history, and all other questions: give exact, verified, concise sentences without guessing.
+- Keep "display" clean ASCII (no *, #, emojis, or non-ASCII symbols) and split into 2 to 4 clear short sentences separated by '. '."""
+
+    messages = [{"role": "system", "content": system_prompt}]
+    messages.extend(state["history"][-10:])
+    messages.append({"role": "user", "content": user_text})
+
+    headers = {
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    for model_id in ["llama-3.3-70b-versatile", "openai/gpt-oss-120b", "llama-3.1-8b-instant"]:
+        payload = {
+            "model": model_id,
+            "messages": messages,
+            "temperature": 0.05,
+            "max_tokens": 1000,
+            "response_format": {"type": "json_object"}
+        }
+        async with httpx.AsyncClient(timeout=25.0) as client:
+            r = await client.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload)
+            if r.status_code == 200:
+                content = r.json()["choices"][0]["message"]["content"]
+                try:
+                    return json.loads(content)
+                except Exception:
+                    return {"cmd": "", "speak": content, "display": clean_ascii(content)}
+            print(f"Model {model_id} failed ({r.status_code}):", r.text)
+
+    return {
+        "cmd": "",
+        "speak": "معذرت، ابھی سرور مصروف ہے۔ تھوڑی دیر بعد دوبارہ کوشش کیجیے۔",
+        "display": "Server busy. Please try again."
+    }
 
 
 @app.get("/")
-async def root():
-    return {"status": "ok", "voice": STATE["voice"], "speed": STATE["speed"], "volume": STATE["volume"]}
+async def home():
+    return {
+        "status": "ok",
+        "message": "ESP32 AI Human-Voice Server is Running!",
+        "groq_key_set": bool(GROQ_API_KEY),
+        "voice": state["voice"],
+        "time": get_ist_time()
+    }
 
 
-@app.get("/audio/{fid}")
-async def get_audio(fid: str):
-    safe_id = re.sub(r"[^a-zA-Z0-9]", "", fid)
-    fp = os.path.join(AUDIO_DIR, f"{safe_id}.mp3")
-    if os.path.exists(fp):
-        return FileResponse(fp, media_type="audio/mpeg")
-    return JSONResponse({"error": "not found"}, status_code=404)
+@app.get("/audio/{audio_id}")
+async def get_audio(audio_id: str):
+    data = audio_cache.get(audio_id)
+    if not data:
+        return Response(status_code=404)
+    return Response(content=data, media_type="audio/mpeg")
 
 
 @app.post("/chat")
-async def chat(request: Request):
-    wav_bytes = await request.body()
-    heard = await transcribe_wav(wav_bytes)
-    print(f"Heard: {heard}")
+async def chat_endpoint(request: Request):
+    if not GROQ_API_KEY:
+        return {"action": "ERROR", "display": "GROQ_API_KEY missing"}
 
-    if not heard:
-        msg = "Awaaz saaf sunai nahi di."
-        audio_url = await make_tts(msg)
+    wav_bytes = await request.body()
+    if len(wav_bytes) < 2500:
+        return {"action": "ERROR", "display": "Audio too short"}
+
+    vcfg = VOICES.get(state["voice"], VOICES["ur_male"])
+    user_text = await transcribe_wav(wav_bytes, vcfg["stt"])
+    print("Heard:", user_text)
+
+    if not user_text or len(user_text.strip()) < 2:
+        mp3 = await generate_mp3("آواز صاف نہیں آئی، براہ کرم دوبارہ بولیں۔", state["voice"], state["rate"])
         return {
             "action": "SPEAK",
             "heard": "",
-            "display": msg,
-            "audio_url": audio_url,
-            "voice": STATE["voice"],
-            "speed": STATE["speed"],
-            "volume": STATE["volume"],
+            "display": "Awaaz saaf nahi aayi. Dobara bolein.",
+            "audio_url": store_audio(mp3),
+            "voice": vcfg["label"],
+            "volume": state["volume"],
+            "speed": state["speed_label"]
         }
 
-    low = heard.lower()
-    if any(k in low for k in ["stop", "ruko", "band karo"]):
-        return {"action": "STOP", "heard": heard, "display": "Stopped.", "voice": STATE["voice"], "speed": STATE["speed"], "volume": STATE["volume"]}
+    low = user_text.lower()
+    live_ctx = ""
+    if any(k in low for k in ["weather", "mausam", "mosam", "temperature", "barish", "snow", "srinagar", "موسم", "بارش"]):
+        city = "Srinagar"
+        m = re.search(r"\b(?:in|of|ka|ki|ke)\s+([a-zA-Z]{3,20})\b", user_text)
+        if m:
+            cand = m.group(1).lower()
+            if cand not in {"today", "aaj", "live", "now", "weather", "mausam", "mosam"}:
+                city = m.group(1)
+        live_ctx = await fetch_live_weather(city)
+    elif any(k in low for k in ["cricket", "score", "match", "ipl", "world cup", "کرکٹ", "اسکور", "میچ"]):
+        live_ctx = await fetch_live_cricket()
+    elif any(k in low for k in ["news", "khabar", "khabrein", "headlines", "latest", "نیوز", "خبر"]):
+        live_ctx = await fetch_live_news()
 
-    if any(k in low for k in ["mute", "awaaz band"]):
-        STATE["volume"] = 0
-        return {"action": "MUTE", "heard": heard, "display": "Muted.", "voice": STATE["voice"], "speed": STATE["speed"], "volume": 0}
+    ai = await ask_llm(user_text, live_ctx)
+    cmd = str(ai.get("cmd", "")).strip().upper()
+    speak = str(ai.get("speak", "")).strip()
+    display = clean_ascii(str(ai.get("display", "")))
 
-    if "volume up" in low or "awaaz badhao" in low:
-        STATE["volume"] = min(18, STATE["volume"] + 2)
-    elif "volume down" in low or "awaaz kam" in low:
-        STATE["volume"] = max(4, STATE["volume"] - 2)
+    if not cmd:
+        vol_match = re.search(r"(?:volume|vol|awaz|awaaz)\s*(?:ko|to|karo|kar do|set)?\s*(\d{1,2})", low)
+        if vol_match:
+            cmd = f"VOL:SET:{vol_match.group(1)}"
 
-    if "surah" in low or "sura" in low or "quran" in low:
-        num_m = re.search(r"\b(\d{1,3})\b", low)
-        num = int(num_m.group(1)) if num_m else 1
-        num = max(1, min(114, num))
-        stream_url = f"https://server8.mp3quran.net/afs/{num:03d}.mp3"
+    if cmd.startswith("QURAN:"):
+        try:
+            surah = int(cmd.split(":")[1])
+            if 1 <= surah <= 114:
+                return {
+                    "action": "STREAM",
+                    "title": f"QURAN SURAH {surah}",
+                    "url": f"https://server8.mp3quran.net/afs/{surah:03d}.mp3",
+                    "voice": vcfg["label"],
+                    "volume": state["volume"],
+                    "speed": state["speed_label"]
+                }
+        except Exception:
+            pass
+
+    if cmd == "RADIO_NAAT":
+        chosen_url = await pick_working_stream(NAAT_STREAMS)
         return {
             "action": "STREAM",
-            "heard": heard,
-            "title": f"SURAH {num:03d}",
-            "url": stream_url,
-            "voice": STATE["voice"],
-            "speed": STATE["speed"],
-            "volume": STATE["volume"],
+            "title": "NAAT STREAM",
+            "url": chosen_url,
+            "voice": vcfg["label"],
+            "volume": state["volume"],
+            "speed": state["speed_label"]
         }
 
-    reply = await ask_llm(heard)
-    audio_url = await make_tts(reply)
+    if cmd == "RADIO_MUSIC":
+        chosen_url = await pick_working_stream(MUSIC_STREAMS)
+        return {
+            "action": "STREAM",
+            "title": "MUSIC STREAM",
+            "url": chosen_url,
+            "voice": vcfg["label"],
+            "volume": state["volume"],
+            "speed": state["speed_label"]
+        }
+
+    if cmd == "STOP":
+        return {"action": "STOP", "voice": vcfg["label"], "volume": state["volume"], "speed": state["speed_label"]}
+
+    if cmd == "VOL:UP":
+        state["volume"] = min(18, state["volume"] + 3)
+        speak = f"آواز بڑھا دی گئی ہے، اب والیوم {state['volume']} پر ہے۔"
+        display = f"Volume increased to {state['volume']}/18."
+    elif cmd == "VOL:DOWN":
+        state["volume"] = max(1, state["volume"] - 3)
+        speak = f"آواز کم کر دی گئی ہے، اب والیوم {state['volume']} پر ہے۔"
+        display = f"Volume decreased to {state['volume']}/18."
+    elif cmd == "VOL:MUTE":
+        state["volume"] = 0
+        return {"action": "MUTE", "volume": 0, "voice": vcfg["label"], "speed": state["speed_label"]}
+    elif cmd.startswith("VOL:SET:"):
+        try:
+            v = int(cmd.split(":")[2])
+            state["volume"] = max(0, min(18, v))
+            speak = f"والیوم {state['volume']} سیٹ کر دیا گیا ہے۔"
+            display = f"Volume set to {state['volume']}/18."
+        except Exception:
+            pass
+
+    elif cmd.startswith("VOICE:"):
+        vk = cmd.split(":")[1].lower()
+        if vk in VOICES:
+            state["voice"] = vk
+            vcfg = VOICES[vk]
+            confirm = {
+                "ur_male":   ("اردو مردانہ آواز سیٹ ہو گئی ہے، فرمائیے میں آپ کی کیا مدد کروں؟", "Urdu male voice active. Ask your question."),
+                "ur_female": ("اردو زنانہ آواز سیٹ ہو گئی ہے، فرمائیے میں آپ کی کیا مدد کروں؟", "Urdu female voice active. Ask your question."),
+                "hi_male":   ("हिंदी आवाज़ सेट हो गई है, बताइए मैं आपकी क्या मदद करूँ?", "Hindi male voice active. Ask your question."),
+                "hi_female": ("हिंदी आवाज़ सेट हो गई है, बताइए मैं आपकी क्या मदद करूँ?", "Hindi female voice active. Ask your question."),
+                "en_male":   ("English male voice is now active. How can I help you?", "English male voice active. Ask your question."),
+                "en_female": ("English female voice is now active. How can I help you?", "English female voice active. Ask your question."),
+            }
+            speak, display = confirm[vk]
+
+    elif cmd == "SPEED:SLOW":
+        state["rate"] = "-18%"
+        state["speed_label"] = "Slow"
+        speak = "ٹھیک ہے، اب میں آہستہ اور واضح بولوں گا۔"
+        display = "Speed set to Slow (-18%)."
+    elif cmd == "SPEED:FAST":
+        state["rate"] = "+15%"
+        state["speed_label"] = "Fast"
+        speak = "ٹھیک ہے، اب میں تھوڑا تیز بولوں گا۔"
+        display = "Speed set to Fast (+15%)."
+    elif cmd == "SPEED:NORMAL":
+        state["rate"] = "+0%"
+        state["speed_label"] = "Norm"
+        speak = "ٹھیک ہے، اب نارمل اسپیڈ سیٹ ہو گئی ہے۔"
+        display = "Speed set to Normal."
+    elif cmd == "CLEAR_MEM":
+        state["history"].clear()
+        speak = "پرانی گفتگو صاف کر دی گئی ہے، فرمائیے اب کیا بات کرنی ہے؟"
+        display = "Memory cleared. Ask a new question."
+    else:
+        state["history"].append({"role": "user", "content": user_text})
+        state["history"].append({"role": "assistant", "content": display or speak[:240]})
+        if len(state["history"]) > 12:
+            state["history"] = state["history"][-12:]
+
+    if not speak:
+        speak = "معذرت، جواب تیار نہیں ہو سکا۔"
+    if not display:
+        display = "Speaking..."
+
+    mp3_bytes = await generate_mp3(speak, state["voice"], state["rate"])
+    audio_url = store_audio(mp3_bytes)
+    vcfg = VOICES[state["voice"]]
+
     return {
         "action": "SPEAK",
-        "heard": heard,
-        "display": reply,
+        "heard": clean_ascii(user_text),
+        "display": display,
         "audio_url": audio_url,
-        "voice": STATE["voice"],
-        "speed": STATE["speed"],
-        "volume": STATE["volume"],
+        "voice": vcfg["label"],
+        "volume": state["volume"],
+        "speed": state["speed_label"]
     }
