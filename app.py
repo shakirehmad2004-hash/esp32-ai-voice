@@ -5,6 +5,7 @@ import uuid
 import urllib.parse
 import xml.etree.ElementTree as ET
 import datetime
+from typing import Optional
 import httpx
 import edge_tts
 from fastapi import FastAPI, Request
@@ -441,7 +442,6 @@ async def chat(request: Request):
     elif "volume down" in low or "awaaz kam" in low or "آواز کم" in low:
         STATE["volume"] = max(3, STATE["volume"] - 3)
 
-    # SD card is reserved for Naat on ESP32 when 'naat' is spoken
     if "naat" in low or "نعت" in low:
         audio_url = await make_tts("SD card se Naat chala rahe hain.")
         return {
@@ -454,11 +454,9 @@ async def chat(request: Request):
             "volume": STATE["volume"],
         }
 
-    # Tafseer / Ayat queries go to ask_llm (with Quran/Tafseer API + fallback when limit hits)
     is_tafseer = any(w in low for w in ["tafseer", "tafsir", "ayat", "ayah", "تفسیر", "آیت"])
     surah_num, ayah_num = extract_surah_and_ayah(low)
 
-    # Online full Quran stream when Surah/Quran is asked without Tafseer/Ayat
     if not is_tafseer and (surah_num is not None or "quran" in low or "قرآن" in low):
         num = surah_num or 1
         stream_url = f"https://server8.mp3quran.net/afs/{num:03d}.mp3"
