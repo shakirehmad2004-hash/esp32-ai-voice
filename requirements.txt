@@ -1,0 +1,5 @@
+fastapi
+uvicorn
+httpx
+edge-tts>=7.0.0
+gTTS
