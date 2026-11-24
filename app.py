@@ -2,10 +2,7 @@ import os
 import re
 import time
 import uuid
-import urllib.parse
-import xml.etree.ElementTree as ET
 import datetime
-from typing import Optional
 import httpx
 import edge_tts
 from fastapi import FastAPI, Request
@@ -40,8 +37,11 @@ STATE = {
 
 VOICE_MAP = {
     "UR-M": "ur-PK-AsadNeural",
+    "UR-F": "ur-PK-UzmaNeural",
     "HI-M": "hi-IN-MadhurNeural",
+    "HI-F": "hi-IN-SwaraNeural",
     "EN-M": "en-US-GuyNeural",
+    "EN-F": "en-US-JennyNeural",
 }
 
 SPEED_MAP = {
@@ -91,18 +91,6 @@ MEEQAT_ANCHORS = [
 
 DAYS_BEFORE = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334]
 
-SURAH_NAMES = {
-    "fatiha": 1, "fatihah": 1, "baqarah": 2, "baqara": 2, "imran": 3,
-    "yasin": 36, "yaseen": 36, "rahman": 55, "waqiah": 56, "mulk": 67,
-    "ikhlas": 112, "falaq": 113, "naas": 114, "nas": 114,
-}
-
-
-def oled_safe(txt: str, fallback: str = "Voice input") -> str:
-    cleaned = re.sub(r"[^\x20-\x7E]", " ", txt or "")
-    cleaned = re.sub(r"\s+", " ", cleaned).strip()
-    return cleaned if cleaned else fallback
-
 
 def get_ist_now() -> datetime.datetime:
     return datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5, minutes=30)))
@@ -146,138 +134,6 @@ def build_namaz_name_time_text() -> str:
     )
 
 
-def extract_surah_and_ayah(text: str) -> tuple[Optional[int], Optional[int]]:
-    low = text.lower()
-    surah_num = None
-    ayah_num = None
-
-    m_surah = re.search(r"(?:surah|sura)\s*(\d{1,3})", low)
-    if m_surah:
-        surah_num = max(1, min(114, int(m_surah.group(1))))
-    else:
-        for k, v in SURAH_NAMES.items():
-            if k in low:
-                surah_num = v
-                break
-
-    m_ayah = re.search(r"(?:ayah|ayat|verse)\s*(\d{1,3})", low)
-    if m_ayah:
-        ayah_num = max(1, int(m_ayah.group(1)))
-    elif surah_num is not None:
-        nums = [int(x) for x in re.findall(r"\b(\d{1,3})\b", low)]
-        if len(nums) >= 2:
-            ayah_num = nums[1]
-
-    return surah_num, ayah_num
-
-
-async def fetch_tafseer_fallback(query: str) -> tuple[str, str]:
-    surah_num, ayah_num = extract_surah_and_ayah(query)
-    try:
-        async with httpx.AsyncClient(timeout=8.0) as client:
-            if surah_num and ayah_num:
-                url = f"https://api.alquran.cloud/v1/ayah/{surah_num}:{ayah_num}/en.asad"
-                r = await client.get(url)
-                if r.status_code == 200:
-                    data = r.json().get("data", {})
-                    txt = oled_safe(data.get("text") or "")[:170]
-                    s_name = oled_safe(data.get("surah", {}).get("englishName") or f"Surah {surah_num}")
-                    if txt:
-                        line = f"{s_name} {surah_num}:{ayah_num}. {txt}."
-                        return line[:160], line
-            elif surah_num:
-                url = f"https://api.alquran.cloud/v1/surah/{surah_num}/en.asad"
-                r = await client.get(url)
-                if r.status_code == 200:
-                    data = r.json().get("data", {})
-                    s_name = oled_safe(data.get("englishName") or f"Surah {surah_num}")
-                    ay_cnt = data.get("numberOfAyahs", "")
-                    first_ay = ""
-                    ayahs = data.get("ayahs") or []
-                    if ayahs:
-                        first_ay = oled_safe(ayahs[0].get("text") or "")[:130]
-                    line = f"{s_name}. {ay_cnt} ayat. {first_ay}."
-                    return line[:160], line
-    except Exception as ex:
-        print(f"Tafseer fallback error: {ex}")
-
-    msg = "Surah aur ayat number bolein. Maslan Surah 2 ayat 255."
-    return msg, msg
-
-
-async def fetch_weather_fallback() -> tuple[str, str]:
-    try:
-        url = (
-            "https://api.open-meteo.com/v1/forecast"
-            "?latitude=34.0837&longitude=74.7973"
-            "&current=temperature_2m,wind_speed_10m"
-            "&timezone=Asia%2FKolkata"
-        )
-        async with httpx.AsyncClient(timeout=8.0) as client:
-            r = await client.get(url)
-            if r.status_code == 200:
-                cur = r.json().get("current", {})
-                temp = cur.get("temperature_2m")
-                wind = cur.get("wind_speed_10m")
-                if temp is not None:
-                    line = f"Srinagar. {temp} C. Wind. {wind} kmh."
-                    return line, line
-    except Exception as ex:
-        print(f"Weather fallback error: {ex}")
-    return "Mausam unavailable.", "Mausam unavailable."
-
-
-async def fetch_news_fallback() -> tuple[str, str]:
-    feeds = [
-        "https://feeds.bbci.co.uk/news/world/asia/rss.xml",
-        "https://www.aljazeera.com/xml/rss/all.xml",
-    ]
-    for feed_url in feeds:
-        try:
-            async with httpx.AsyncClient(timeout=8.0) as client:
-                r = await client.get(feed_url)
-                if r.status_code == 200:
-                    root = ET.fromstring(r.text)
-                    titles = []
-                    for item in root.findall(".//item")[:2]:
-                        t = item.findtext("title")
-                        if t:
-                            titles.append(oled_safe(t)[:75] + ".")
-                    if titles:
-                        joined = " ".join(titles)
-                        return joined[:160], joined[:220]
-        except Exception as ex:
-            print(f"News fallback error ({feed_url}): {ex}")
-    return "Khabrein unavailable.", "Khabrein unavailable."
-
-
-async def fetch_general_fallback(query: str) -> tuple[str, str]:
-    low = query.lower()
-    if any(w in low for w in ["tafseer", "tafsir", "ayat", "ayah", "surah", "sura", "quran"]):
-        return await fetch_tafseer_fallback(query)
-
-    clean_q = re.sub(r"\b(kya|hai|hain|ka|ki|ke|what|is|are|who|tell|me|batao|bataiye|maloomat)\b", "", query, flags=re.I).strip()
-    clean_q = oled_safe(clean_q, oled_safe(query, "Srinagar"))
-
-    try:
-        encoded = urllib.parse.quote(clean_q[:80])
-        url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{encoded}"
-        async with httpx.AsyncClient(timeout=8.0, headers={"User-Agent": "ESP32VoiceAssistant/1.0"}) as client:
-            r = await client.get(url)
-            if r.status_code == 200:
-                extract = (r.json().get("extract") or "").strip()
-                if extract:
-                    sents = re.split(r"(?<=[.!?])\s+", extract)
-                    short_ans = oled_safe(" ".join(sents[:2]))
-                    if short_ans:
-                        return short_ans[:160], short_ans[:220]
-    except Exception as ex:
-        print(f"General fallback error: {ex}")
-
-    msg = "Limit aa gayi hai. Tafseer, Quran, Mausam, aur News chal rahe hain."
-    return msg, msg
-
-
 async def make_tts(text: str) -> str:
     fid = uuid.uuid4().hex[:10]
     out_path = os.path.join(AUDIO_DIR, f"{fid}.mp3")
@@ -304,7 +160,7 @@ async def transcribe_wav(wav_bytes: bytes) -> str:
         try:
             async with httpx.AsyncClient(timeout=20.0) as client:
                 files = {"file": ("audio.wav", wav_bytes, "audio/wav")}
-                data = {"model": "whisper-large-v3-turbo", "language": "en"}
+                data = {"model": "whisper-large-v3-turbo"}
                 resp = await client.post(
                     "https://api.groq.com/openai/v1/audio/transcriptions",
                     headers={"Authorization": f"Bearer {key}"},
@@ -312,82 +168,58 @@ async def transcribe_wav(wav_bytes: bytes) -> str:
                     data=data,
                 )
                 if resp.status_code == 200:
-                    raw_txt = (resp.json().get("text") or "").strip()
-                    return oled_safe(raw_txt, raw_txt)
+                    return (resp.json().get("text") or "").strip()
                 print(f"Whisper failed ({resp.status_code}): {resp.text[:160]}")
         except Exception as e:
             print(f"Whisper error: {e}")
     return ""
 
 
-async def ask_llm(user_text: str) -> tuple[str, str]:
+async def ask_llm(user_text: str) -> str:
     now = get_ist_now()
     low = user_text.lower()
-
     if any(w in low for w in ["namaz", "nimaz", "meeqat", "miqat", "fajr", "zohar", "asar", "maghrib", "esha", "isha", "prayer"]):
-        txt = build_namaz_name_time_text()
-        return txt, txt
+        return build_namaz_name_time_text()
 
-    if any(w in low for w in ["time", "waqt", "baj", "baje", "clock"]) and "namaz" not in low:
-        cur_mins = now.hour * 60 + now.minute
-        txt = f"Waqt. {fmt_12_short(cur_mins)}."
-        return txt, txt
+    sys_prompt = (
+        f"You are a helpful voice assistant in Srinagar, Kashmir. "
+        f"Current date & time: {now.strftime('%d %b %Y, %I:%M %p')}. "
+        f"Reply concisely in Roman Urdu/Hindi in 2 short sentences. No markdown or symbols."
+    )
 
-    if any(w in low for w in ["mausam", "mosam", "weather", "barish", "garmi", "sardi", "temp", "temperature"]):
-        return await fetch_weather_fallback()
+    for key in RAW_KEYS:
+        for model in GROQ_MODELS:
+            try:
+                async with httpx.AsyncClient(timeout=18.0) as client:
+                    resp = await client.post(
+                        "https://api.groq.com/openai/v1/chat/completions",
+                        headers={
+                            "Authorization": f"Bearer {key}",
+                            "Content-Type": "application/json",
+                        },
+                        json={
+                            "model": model,
+                            "messages": [
+                                {"role": "system", "content": sys_prompt},
+                                {"role": "user", "content": user_text},
+                            ],
+                            "max_tokens": 140,
+                            "temperature": 0.4,
+                        },
+                    )
+                    if resp.status_code == 200:
+                        ans = resp.json()["choices"][0]["message"]["content"].strip()
+                        ans = re.sub(r"<think>.*?</think>", "", ans, flags=re.S).strip()
+                        return ans
+                    print(f"Model {model} failed ({resp.status_code}): {resp.text[:160]}")
+            except Exception as ex:
+                print(f"Model {model} exception: {ex}")
 
-    if any(w in low for w in ["news", "khabar", "khabrein", "headlines", "live news"]):
-        return await fetch_news_fallback()
-
-    is_tafseer = any(w in low for w in ["tafseer", "tafsir", "ayat", "ayah"])
-
-    if RAW_KEYS:
-        if is_tafseer:
-            sys_prompt = (
-                "You are a concise male Islamic scholar. Give short Tafseer in simple Roman Urdu/Hindi "
-                "using plain English letters only. Keep each sentence short and end sentences with a period."
-            )
-        else:
-            sys_prompt = (
-                f"You are a helpful male assistant in Srinagar. Date: {now.strftime('%d %b %Y')}. "
-                f"Reply in 2 short sentences using plain English letters only. End sentences with a period."
-            )
-
-        for key in RAW_KEYS:
-            for model in GROQ_MODELS:
-                try:
-                    async with httpx.AsyncClient(timeout=18.0) as client:
-                        resp = await client.post(
-                            "https://api.groq.com/openai/v1/chat/completions",
-                            headers={
-                                "Authorization": f"Bearer {key}",
-                                "Content-Type": "application/json",
-                            },
-                            json={
-                                "model": model,
-                                "messages": [
-                                    {"role": "system", "content": sys_prompt},
-                                    {"role": "user", "content": user_text},
-                                ],
-                                "max_tokens": 160 if is_tafseer else 120,
-                                "temperature": 0.35 if is_tafseer else 0.4,
-                            },
-                        )
-                        if resp.status_code == 200:
-                            ans = resp.json()["choices"][0]["message"]["content"].strip()
-                            ans = re.sub(r"<think>.*?</think>", "", ans, flags=re.S).strip()
-                            safe_ans = oled_safe(ans)
-                            return safe_ans[:160], safe_ans[:220]
-                        print(f"Model {model} failed ({resp.status_code}): {resp.text[:160]}")
-                except Exception as ex:
-                    print(f"Model {model} exception: {ex}")
-
-    return await fetch_general_fallback(user_text)
+    return "Server abhi busy hai, thodi der baad koshish karein."
 
 
 @app.get("/")
 async def root():
-    STATE["voice"] = "UR-M"
     return {"status": "ok", "voice": STATE["voice"], "speed": STATE["speed"], "volume": STATE["volume"]}
 
 
@@ -402,13 +234,12 @@ async def get_audio(fid: str):
 
 @app.post("/chat")
 async def chat(request: Request):
-    STATE["voice"] = "UR-M"
     wav_bytes = await request.body()
     heard = await transcribe_wav(wav_bytes)
     print(f"Heard: {heard}")
 
     if not heard:
-        msg = "Awaaz saaf nahi."
+        msg = "Awaaz saaf sunai nahi di."
         audio_url = await make_tts(msg)
         return {
             "action": "SPEAK",
@@ -433,24 +264,10 @@ async def chat(request: Request):
     elif "volume down" in low or "awaaz kam" in low:
         STATE["volume"] = max(4, STATE["volume"] - 2)
 
-    if "naat" in low:
-        msg = "SD card Naat."
-        audio_url = await make_tts(msg)
-        return {
-            "action": "SPEAK",
-            "heard": heard,
-            "display": msg,
-            "audio_url": audio_url,
-            "voice": STATE["voice"],
-            "speed": STATE["speed"],
-            "volume": STATE["volume"],
-        }
-
-    is_tafseer = any(w in low for w in ["tafseer", "tafsir", "ayat", "ayah"])
-    surah_num, _ = extract_surah_and_ayah(low)
-
-    if not is_tafseer and (surah_num is not None or "quran" in low):
-        num = surah_num or 1
+    if "surah" in low or "sura" in low or "quran" in low:
+        num_m = re.search(r"\b(\d{1,3})\b", low)
+        num = int(num_m.group(1)) if num_m else 1
+        num = max(1, min(114, num))
         stream_url = f"https://server8.mp3quran.net/afs/{num:03d}.mp3"
         return {
             "action": "STREAM",
@@ -462,12 +279,12 @@ async def chat(request: Request):
             "volume": STATE["volume"],
         }
 
-    disp, spk = await ask_llm(heard)
-    audio_url = await make_tts(spk)
+    reply = await ask_llm(heard)
+    audio_url = await make_tts(reply)
     return {
         "action": "SPEAK",
         "heard": heard,
-        "display": disp,
+        "display": reply,
         "audio_url": audio_url,
         "voice": STATE["voice"],
         "speed": STATE["speed"],
