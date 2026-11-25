@@ -17,7 +17,7 @@ app = FastAPI()
 AUDIO_DIR = "/tmp/tts_audio"
 os.makedirs(AUDIO_DIR, exist_ok=True)
 HISTORY_FILE = "/tmp/chat_history.json"
-MAX_HISTORY = 30
+MAX_HISTORY = 24
 
 RAW_KEYS = [
     k.strip()
@@ -155,7 +155,7 @@ SURAH_NAMES: Dict[str, int] = {
     "jathiyah": 45, "jasiya": 45, "جاثیہ": 45,
     "ahqaf": 46, "احقاف": 46,
     "muhammad": 47, "محمد": 47,
-    "fath": 48, "fatah": 48, "فتح": 48, "الفتح": 48, "फतह": 48,
+    "fath": 48, "fatah": 48, "فتح": 48,
     "hujurat": 49, "حجرات": 49,
     "qaf": 50, "ق": 50,
     "dhariyat": 51, "zariyat": 51, "ذاریات": 51,
@@ -268,14 +268,7 @@ SURAH_CLASSICAL_NOTES: Dict[int, Dict[str, str]] = {
         "halaat_ur": "سورۃ البقرہ مدینہ منورہ میں نازل ہوئی۔ مدنی دور میں جب اسلامی معاشرہ منظم ہو رہا تھا تو معاشرتی، مالی اور شرعی احکام نازل کیے گئے۔",
         "halaat_en": "Surah Al-Baqarah is a Madani Surah revealed in Madinah after Hijrah, addressing faith, social conduct, and legal rulings.",
         "halaat_ar": "سورة البقرة مدنية، نزلت في المدينة المنورة لتبيان الأحكام الشرعية والهداية.",
-        "tafseer_ur": "معتبر تفاسیر کے مطابق ان آیات میں شرعی احکام، تقویٰ اور بندگی کے اصول بیان ہوئے ہیں۔",
-    },
-    48: {
-        "revelation": "Madani",
-        "halaat_ur": "سورۃ الفتح صلحِ حدیبیہ کے موقع پر مدینہ منورہ کے قریب نازل ہوئی۔ بظاہر صلح کی شرائط مشکل معلوم ہوتی تھیں لیکن قرآن نے اسے فتحِ مبین قرار دیا کیونکہ اس سے اسلام کو پھیلنے اور امن کا موقع ملا۔",
-        "halaat_en": "Surah Al-Fath is a Madani Surah revealed around the Treaty of Hudaybiyyah, which opened doors for peace and the spread of Islam.",
-        "halaat_ar": "سورة الفتح مدنية، نزلت في طريق العودة من صلح الحديبية وسمّت الصلح فتحا مبينا.",
-        "tafseer_ur": "معتبر تفاسیر کے مطابق اس سورت میں نبی کریم صلی اللہ علیہ وسلم کو فتح کی بشارت، مومنین کے دلوں میں سکینت اور اللہ کی قدرت و حکمت کا ذکر ہے۔",
+        "tafseer_ur": "معتبر تفاسیر کے مطابق آیت 180 تا 182 میں وصیت کے احکام، آیت 183 تا 185 میں رمضان کے روزوں اور قرآن کے نزول کا ذکر، اور اس سے آگے کی آیات میں احکام و ہدایات بیان ہوئے ہیں۔",
     },
     112: {
         "revelation": "Makki",
@@ -421,7 +414,7 @@ def format_history_for_prompt() -> str:
     if not hist:
         return ""
     lines = []
-    for idx, item in enumerate(hist[-12:], 1):
+    for idx, item in enumerate(hist[-10:], 1):
         lines.append(f"{idx}. User: {item.get('u', '')} | Assistant: {item.get('a', '')}")
     return (
         "Saved Conversation History (ALWAYS keep track of earlier questions, topics, and answers so follow-ups are accurate):\n"
@@ -435,8 +428,7 @@ def is_follow_up_ayah_request(text: str) -> bool:
     return any(p in low for p in [
         "is se aagay", "is se age", "is se agay", "is ke aagay", "is ke age",
         "agli aayat", "agla aayat", "agli ayat", "next ayah", "next ayat", "next verse",
-        "isi surah", "isi sura", "usi surah", "usi sura",
-        "اس سے آگے", "اگلی آیت", "اگلی آیات", "اسی سورہ",
+        "اس سے آگے", "اگلی آیت", "اگلی آیات",
     ])
 
 
@@ -657,7 +649,7 @@ async def fetch_quran_verses(
                 e_idx = max(s_idx + 1, min(total, target_end))
             else:
                 s_idx = 0
-                e_idx = min(total, 3)
+                e_idx = min(total, 4)
 
             out_ayahs: List[Tuple[int, str, str, str]] = []
             for idx in range(s_idx, e_idx):
@@ -960,8 +952,7 @@ async def call_groq_bilingual(system_prompt: str, user_prompt: str, lang: str, l
                             disp_fb = clean_ascii(voice_only)
                             if disp_fb and voice_only:
                                 return disp_fb, voice_only
-                            if voice_only:
-                                return voice_only[:180], voice_only
+                            return "Jawab tayyar hai.", voice_only or "جواب تیار ہے۔"
 
                         if lang == "AR":
                             ar_clean = clean_arabic_display(raw)
@@ -1022,7 +1013,7 @@ async def wiki_fallback(query: str) -> Tuple[str, str]:
 async def transcribe_wav(wav_bytes: bytes) -> str:
     if not RAW_KEYS:
         return ""
-    hint_prompt = "Educational philosophy kya hai, Surah Fatah ayat number 20 tarjuma, Is se aage tarjuma batao isi surah ka, Surah Baqarah aayat 180 se 185 ki tafseer sunao, Brief mein batao, Tafseel se batao."
+    hint_prompt = "Surah Baqarah aayat 180 se 185 ki tafseer sunao, Surah Ikhlas ki tafseer sunao, Is se aagay aayat ka tarjuma batao, Brief mein batao, Tafseel se batao."
     for key in RAW_KEYS:
         try:
             async with httpx.AsyncClient(timeout=18.0) as client:
