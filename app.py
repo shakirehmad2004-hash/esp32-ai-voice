@@ -2,7 +2,6 @@ import os
 import re
 import time
 import uuid
-import json
 import urllib.parse
 import xml.etree.ElementTree as ET
 import datetime
@@ -29,12 +28,12 @@ RAW_KEYS = [
     if k.strip()
 ]
 
+# Fast + accurate fallback chain
 GROQ_MODELS = [
     "llama-3.3-70b-versatile",
+    "llama-3.1-8b-instant",
     "meta-llama/llama-4-scout-17b-16e-instruct",
     "qwen/qwen3-32b",
-    "llama-3.1-8b-instant",
-    "openai/gpt-oss-20b",
 ]
 
 STATE = {
@@ -50,13 +49,18 @@ VOICE_MAP = {
     "AR-M": "ar-SA-HamedNeural",
 }
 
+GTTS_LANG_MAP = {
+    "UR-M": "ur",
+    "EN-M": "en",
+    "AR-M": "ar",
+}
+
 SPEED_MAP = {
     "Slow": "-15%",
     "Norm": "+0%",
     "Fast": "+18%",
 }
 
-# Full-year Meeqat-e-Salah anchors for Srinagar / Shopian (34 deg)
 MEEQAT_ANCHORS = [
     (1,  1,  (6, 8),  (7, 37), (12, 35), (15, 55), (17, 36), (19, 1)),
     (1,  15, (6, 10), (7, 36), (12, 41), (16, 8),  (17, 48), (19, 12)),
@@ -98,10 +102,9 @@ MEEQAT_ANCHORS = [
 
 DAYS_BEFORE = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334]
 
-# All 114 Surahs + common spellings & Arabic/Urdu names
 SURAH_NAMES: Dict[str, int] = {
-    "fatiha": 1, "fatihah": 1, "fateha": 1, "فاتحہ": 1, "الفاتحة": 1,
-    "baqarah": 2, "baqara": 2, "bakra": 2, "بقرہ": 2, "البقرة": 2,
+    "fatiha": 1, "fatihah": 1, "fateha": 1, "فاتحہ": 1, "الفاتحة": 1, "फातिहा": 1,
+    "baqarah": 2, "baqara": 2, "bakra": 2, "بقرہ": 2, "البقرة": 2, "बकरा": 2,
     "imran": 3, "aal imran": 3, "al imran": 3, "عمران": 3,
     "nisa": 4, "nisaa": 4, "نساء": 4,
     "maidah": 5, "maida": 5, "مائدہ": 5, "المائدة": 5,
@@ -117,7 +120,7 @@ SURAH_NAMES: Dict[str, int] = {
     "hijr": 15, "حجر": 15,
     "nahl": 16, "نحل": 16,
     "isra": 17, "bani israil": 17, "اسراء": 17,
-    "kahf": 18, "kahaf": 18, "کہف": 18, "الكهف": 18,
+    "kahf": 18, "kahaf": 18, "کہف": 18, "الكهف": 18, "कहफ": 18,
     "maryam": 19, "mariam": 19, "مریم": 19,
     "taha": 20, "ta ha": 20, "طہ": 20, "طه": 20,
     "anbiya": 21, "ambiya": 21, "انبیاء": 21,
@@ -135,7 +138,7 @@ SURAH_NAMES: Dict[str, int] = {
     "ahzab": 33, "احزاب": 33,
     "saba": 34, "سبا": 34,
     "fatir": 35, "فاطر": 35,
-    "yasin": 36, "yaseen": 36, "یاسین": 36, "يس": 36,
+    "yasin": 36, "yaseen": 36, "یاسین": 36, "يس": 36, "यासीन": 36,
     "saffat": 37, "صافات": 37,
     "sad": 38, "saad": 38, "ص": 38,
     "zumar": 39, "زمر": 39,
@@ -154,8 +157,8 @@ SURAH_NAMES: Dict[str, int] = {
     "tur": 52, "toor": 52, "طور": 52,
     "najm": 53, "نجم": 53,
     "qamar": 54, "قمر": 54,
-    "rahman": 55, "rehman": 55, "رحمن": 55, "الرحمن": 55,
-    "waqiah": 56, "waqia": 56, "واقعہ": 56, "الواقعة": 56,
+    "rahman": 55, "rehman": 55, "رحمن": 55, "الرحمن": 55, "रहमान": 55,
+    "waqiah": 56, "waqia": 56, "واقعہ": 56, "الواقعة": 56, "वाकिया": 56,
     "hadid": 57, "hadeed": 57, "حدید": 57,
     "mujadila": 58, "مجادلہ": 58,
     "hashr": 59, "حشر": 59,
@@ -166,7 +169,7 @@ SURAH_NAMES: Dict[str, int] = {
     "taghabun": 64, "تغابن": 64,
     "talaq": 65, "طلاق": 65,
     "tahrim": 66, "تحریم": 66,
-    "mulk": 67, "tabarak": 67, "ملک": 67, "الملك": 67,
+    "mulk": 67, "tabarak": 67, "ملک": 67, "الملك": 67, "मुल्क": 67,
     "qalam": 68, "قلم": 68,
     "haqqah": 69, "haqqa": 69, "حاقہ": 69,
     "maarij": 70, "معارج": 70,
@@ -202,31 +205,31 @@ SURAH_NAMES: Dict[str, int] = {
     "adiyat": 100, "عادیات": 100,
     "qariah": 101, "qaria": 101, "قارعہ": 101,
     "takathur": 102, "takasur": 102, "تکاثر": 102,
-    "asr": 103, "عصر": 103,
+    "asr": 103, "عصر": 103, "अस्र": 103,
     "humazah": 104, "ہمزہ": 104,
     "fil": 105, "feel": 105, "فیل": 105,
     "quraysh": 106, "quraish": 106, "قریش": 106,
     "maun": 107, "maoon": 107, "ماعون": 107,
-    "kawthar": 108, "kausar": 108, "کوثر": 108,
+    "kawthar": 108, "kausar": 108, "کوثر": 108, "कौसर": 108,
     "kafirun": 109, "kafiroon": 109, "کافرون": 109,
     "nasr": 110, "نصر": 110,
     "masad": 111, "lahab": 111, "مسد": 111, "لہب": 111,
-    "ikhlas": 112, "qul huwallah": 112, "اخلاص": 112, "الإخلاص": 112,
-    "falaq": 113, "فلق": 113, "الفلق": 113,
-    "naas": 114, "nas": 114, "ناس": 114, "الناس": 114,
+    "ikhlas": 112, "ekhlas": 112, "iklas": 112, "qul huwallah": 112, "اخلاص": 112, "الإخلاص": 112, "इखलास": 112, "इख़लास": 112,
+    "falaq": 113, "falak": 113, "فلق": 113, "الفلق": 113, "फलक": 113,
+    "naas": 114, "nas": 114, "ناس": 114, "الناس": 114, "नास": 114,
 }
 
 NUMBER_WORDS = {
-    "ek": 1, "aik": 1, "one": 1, "pehli": 1, "pehlay": 1, "pehle": 1, "first": 1, "ایک": 1, "پہلی": 1, "الأولى": 1,
-    "do": 2, "two": 2, "دو": 2, "اثنين": 2,
-    "teen": 3, "three": 3, "تین": 3, "ثلاث": 3,
-    "chaar": 4, "char": 4, "four": 4, "چار": 4, "أربع": 4,
-    "paanch": 5, "panch": 5, "five": 5, "پانچ": 5, "خمس": 5,
-    "cheh": 6, "chhe": 6, "six": 6, "چھ": 6, "ست": 6,
-    "saat": 7, "sat": 7, "seven": 7, "سات": 7, "سبع": 7,
-    "aath": 8, "ath": 8, "eight": 8, "آٹھ": 8, "ثمان": 8,
-    "nau": 9, "nine": 9, "نو": 9, "تسع": 9,
-    "das": 10, "ten": 10, "دس": 10, "عشر": 10,
+    "ek": 1, "aik": 1, "one": 1, "pehli": 1, "pehlay": 1, "pehle": 1, "first": 1, "ایک": 1, "پہلی": 1, "الأولى": 1, "पहली": 1,
+    "do": 2, "two": 2, "دو": 2, "اثنين": 2, "दो": 2,
+    "teen": 3, "three": 3, "تین": 3, "ثلاث": 3, "तीन": 3,
+    "chaar": 4, "char": 4, "four": 4, "چار": 4, "أربع": 4, "चार": 4,
+    "paanch": 5, "panch": 5, "five": 5, "پانچ": 5, "خمس": 5, "पांच": 5, "पाँच": 5,
+    "cheh": 6, "chhe": 6, "six": 6, "چھ": 6, "ست": 6, "छह": 6,
+    "saat": 7, "sat": 7, "seven": 7, "سات": 7, "سبع": 7, "सात": 7,
+    "aath": 8, "ath": 8, "eight": 8, "آٹھ": 8, "ثمان": 8, "आठ": 8,
+    "nau": 9, "nine": 9, "نو": 9, "تسع": 9, "नौ": 9,
+    "das": 10, "ten": 10, "دس": 10, "عشر": 10, "दस": 10,
 }
 
 HIJRI_MONTHS = [
@@ -278,11 +281,27 @@ def clean_ascii(text: str) -> str:
 
 def clean_arabic_display(text: str) -> str:
     s = re.sub(r"<think>.*?</think>", "", text or "", flags=re.S)
-    # Remove tashkeel/harakat so 8x8 OLED glyphs stay crisp
     s = re.sub(r"[\u064B-\u065F\u0670\u0640]", "", s)
     s = re.sub(r"[*_#`~\"']+", "", s)
     s = re.sub(r"\s+", " ", s).strip()
     return s
+
+
+def is_tafseer_intent(text: str) -> bool:
+    low = (text or "").lower()
+    keywords = [
+        "tafseer", "tafsir", "tafsīr", "tafser", "tapsir", "tasfir", "tabseer", "takseer", "taseer",
+        "tarjuma", "tarjama", "translation", "meaning", "mafhoom", "matlab", "explain", "sharah",
+        "ayat", "aayat", "ayah", "verse", "ayatul kursi", "ayat ul kursi",
+        "تفسیر", "تفسير", "تفصیر", "تبصیر", "تقصیر", "ترجمہ", "ترجمة", "آیت", "آیات", "آية",
+        "معنی", "معنى", "مطلب", "شرح", "آیت الکرسی", "آية الكرسي",
+        "तफसीर", "तफ़सीर", "तफ्सीर", "तर्जुमा", "तरजुमा", "आयत", "आयात", "मतलब", "अर्थ", "व्याख्या",
+    ]
+    if any(k in low for k in keywords):
+        return True
+    if re.search(r"taf[sz]e*r|tap[sz]i*r|tab[sz]e*r|tarj[au]m", low):
+        return True
+    return False
 
 
 def detect_language(text: str) -> str:
@@ -294,7 +313,7 @@ def detect_language(text: str) -> str:
     if any(w in low for w in ["urdu mein", "in urdu", "hindi mein", "اردو میں"]):
         return "UR"
 
-    # Devanagari -> treat as Urdu/Hindi mode (Roman Urdu display + Urdu voice)
+    # Devanagari -> Urdu/Hindi mode (Roman Urdu OLED + Urdu voice)
     if re.search(r"[\u0900-\u097F]", text):
         return "UR"
 
@@ -302,20 +321,18 @@ def detect_language(text: str) -> str:
     if re.search(r"[\u0679\u0688\u0691\u06BA\u06D2\u06C1\u06BE\u06AF\u067E\u0686\u0698\u06CC]", text):
         return "UR"
 
-    # Urdu/Hindi common words in Urdu script or Roman script
-    urdu_markers = [
+    urdu_markers = {
         "کے", "کا", "کی", "میں", "ہے", "ہیں", "تھا", "بتاؤ", "بتائیں", "سناؤ", "سنائیں",
         "کیا", "کیسے", "آج", "کل", "کون", "کہاں", "نماز", "موسم", "خبریں", "تفسیر", "پہلی",
-        "kya", "hai", "hain", "batao", "bataiye", "sunao", "sunawo", "kaise", "aaj",
-        "namaz", "mausam", "khabar", "khabrein", "khabrai", "tafseer", "tarjuma", "pehli",
-        "pehlay", "pehle", "aayat", "ayat", "surah", "kaun", "kahan", "kitna", "band",
-        "chalu", "dikhao", "ruko", "awaaz", "karo", "mera", "mujhe", "hum", "aap", "bhai",
-    ]
+        "kya", "hai", "hain", "he", "batao", "bataiye", "sunao", "sunawo", "kaise", "aaj",
+        "namaz", "mausam", "khabar", "khabrein", "khabrai", "tafseer", "tafsir", "tarjuma",
+        "pehli", "pehlay", "pehle", "aayat", "ayat", "surah", "kaun", "kahan", "kitna",
+        "band", "chalu", "dikhao", "ruko", "awaaz", "karo", "mera", "mujhe", "hum", "aap", "ki", "ka", "ke",
+    }
     tokens = re.findall(r"[\w\u0600-\u06FF]+", low)
     if any(tok in urdu_markers for tok in tokens):
         return "UR"
 
-    # Pure Arabic script without Urdu markers -> Arabic
     if re.search(r"[\u0600-\u06FF]", text):
         return "AR"
 
@@ -381,21 +398,18 @@ def replace_number_words(text: str) -> str:
 
 
 def parse_quran_request(text: str) -> Tuple[Optional[int], Optional[int], Optional[int], bool]:
-    """Returns (surah_num, start_ayah, end_ayah, is_last_n)."""
     low = text.lower()
 
-    # Special well-known verses
     if any(k in low for k in ["ayatul kursi", "ayat ul kursi", "ayat-ul-kursi", "آیت الکرسی", "آية الكرسي"]):
         return 2, 255, 255, False
     if any(k in low for k in ["amanar rasul", "amanar rasool", "آمن الرسول"]):
         return 2, 285, 286, False
 
     surah_num = None
-    m_surah = re.search(r"(?:surah|sura|سوره|سورہ|سورة)\s*(?:number|no|نمبر)?\s*(\d{1,3})", low)
+    m_surah = re.search(r"(?:surah|sura|سوره|سورہ|سورة|सूरह)\s*(?:number|no|نمبر)?\s*(\d{1,3})", low)
     if m_surah:
         surah_num = max(1, min(114, int(m_surah.group(1))))
     else:
-        # Sort by longest key first so "aal imran" matches before "imran"
         for name in sorted(SURAH_NAMES.keys(), key=len, reverse=True):
             if name in low:
                 surah_num = SURAH_NAMES[name]
@@ -403,33 +417,29 @@ def parse_quran_request(text: str) -> Tuple[Optional[int], Optional[int], Option
 
     norm = replace_number_words(low)
 
-    # Check "first N ayahs" / "pehli 5 aayat"
     m_first = re.search(
-        r"(?:first|pehli|pehlay|pehle|shuru\s*ki|ابتدائی|پہلی|أول)\s*(\d{1,2})\s*(?:ayat|aayat|ayah|ayahs|verses|آیات|آیت|آية)",
+        r"(?:first|pehli|pehlay|pehle|shuru\s*ki|ابتدائی|پہلی|أول|पहली)\s*(\d{1,2})\s*(?:ayat|aayat|ayah|ayahs|verses|آیات|آیت|آية|आयत|आयात)",
         norm,
     )
     if m_first:
         n = max(1, min(10, int(m_first.group(1))))
         return surah_num, 1, n, False
 
-    # Also match "5 aayat shuru ki" or "1 5 aayat" after pehli replaced with 1
-    m_first2 = re.search(r"\b1\s+(\d{1,2})\s*(?:ayat|aayat|ayah|ayahs|verses|آیات|آیت|آية)", norm)
-    if m_first2 and any(k in low for k in ["pehli", "pehlay", "pehle", "first", "پہلی", "أول"]):
+    m_first2 = re.search(r"\b1\s+(\d{1,2})\s*(?:ayat|aayat|ayah|ayahs|verses|آیات|آیت|آية|आयत|आयात)", norm)
+    if m_first2 and any(k in low for k in ["pehli", "pehlay", "pehle", "first", "پہلی", "أول", "पहली"]):
         n = max(1, min(10, int(m_first2.group(1))))
         return surah_num, 1, n, False
 
-    # Check "last N ayahs" / "aakhri 2 aayat"
     m_last = re.search(
-        r"(?:last|aakhri|akhri|aakhir\s*ki|آخری|آخر)\s*(\d{1,2})\s*(?:ayat|aayat|ayah|ayahs|verses|آیات|آیت|آية)",
+        r"(?:last|aakhri|akhri|aakhir\s*ki|آخری|آخر|आखिरी)\s*(\d{1,2})\s*(?:ayat|aayat|ayah|ayahs|verses|آیات|آیت|آية|आयत|आयात)",
         norm,
     )
     if m_last:
         n = max(1, min(10, int(m_last.group(1))))
         return surah_num, n, n, True
 
-    # Check range: "ayat 1 se 5" / "verses 3 to 7" / "1-5"
     m_range = re.search(
-        r"(?:ayat|aayat|ayah|verse|آیت|آیات|آية)?\s*(\d{1,3})\s*(?:se|say|to|-|تا|إلى)\s*(\d{1,3})",
+        r"(?:ayat|aayat|ayah|verse|آیت|آیات|آية|आयत)?\s*(\d{1,3})\s*(?:se|say|to|-|تا|إلى|से)\s*(\d{1,3})",
         norm,
     )
     if m_range:
@@ -437,16 +447,14 @@ def parse_quran_request(text: str) -> Tuple[Optional[int], Optional[int], Option
         e_ay = max(s_ay, min(s_ay + 9, int(m_range.group(2))))
         return surah_num, s_ay, e_ay, False
 
-    # Check single ayah: "ayat 255"
-    m_single = re.search(r"(?:ayat|aayat|ayah|verse|آیت|آية)\s*(?:number|no|نمبر)?\s*(\d{1,3})", norm)
+    m_single = re.search(r"(?:ayat|aayat|ayah|verse|آیت|آية|आयत)\s*(?:number|no|نمبر)?\s*(\d{1,3})", norm)
     if m_single:
         a = max(1, int(m_single.group(1)))
         return surah_num, a, a, False
 
-    # If surah number was spoken as a plain number with "surah"
     if surah_num is None:
         nums = [int(x) for x in re.findall(r"\b(\d{1,3})\b", norm)]
-        if nums and any(k in low for k in ["surah", "sura", "quran", "سورہ", "سورة", "قرآن"]):
+        if nums and any(k in low for k in ["surah", "sura", "quran", "سورہ", "سورة", "قرآن", "सूरह"]):
             surah_num = max(1, min(114, nums[0]))
 
     return surah_num, None, None, False
@@ -454,17 +462,17 @@ def parse_quran_request(text: str) -> Tuple[Optional[int], Optional[int], Option
 
 async def fetch_quran_verses(
     surah_num: int, start_ay: Optional[int], end_ay: Optional[int], is_last: bool
-) -> Tuple[str, int, str]:
-    """Fetch authentic Arabic + Urdu + English verses from Al-Quran Cloud."""
+) -> Tuple[str, int, str, str]:
+    """Returns (surah_name, total_ayahs, verse_block, ur_plain_fallback)."""
     url = f"https://api.alquran.cloud/v1/surah/{surah_num}/editions/quran-uthmani,ur.jalandhry,en.sahih"
     try:
         async with httpx.AsyncClient(timeout=12.0) as client:
             r = await client.get(url)
             if r.status_code != 200:
-                return "", 0, ""
+                return "", 0, "", ""
             editions = r.json().get("data", [])
             if len(editions) < 3:
-                return "", 0, ""
+                return "", 0, "", ""
             ar_ed, ur_ed, en_ed = editions[0], editions[1], editions[2]
             s_name = ar_ed.get("englishName") or f"Surah {surah_num}"
             total = ar_ed.get("numberOfAyahs", 0)
@@ -479,28 +487,29 @@ async def fetch_quran_verses(
                 s_idx = max(0, min(total - 1, start_ay - 1))
                 e_idx = max(s_idx + 1, min(total, (end_ay or start_ay)))
             else:
-                # Default overview: first 5 verses if full surah tafseer requested
                 s_idx = 0
                 e_idx = min(total, 5)
 
             lines = []
+            ur_fallback_parts = []
             for idx in range(s_idx, e_idx):
                 anum = idx + 1
                 ar_t = ar_list[idx].get("text", "") if idx < len(ar_list) else ""
                 ur_t = ur_list[idx].get("text", "") if idx < len(ur_list) else ""
                 en_t = en_list[idx].get("text", "") if idx < len(en_list) else ""
-                lines.append(f"Ayah {anum} | AR: {ar_t} | UR: {ur_t} | EN: {en_t}")
+                lines.append(f"Ayah {anum} | UR: {ur_t} | EN: {en_t}")
+                ur_fallback_parts.append(f"آیت {anum}: {ur_t}")
 
-            return s_name, total, "\n".join(lines)
+            return s_name, total, "\n".join(lines), " ".join(ur_fallback_parts)
     except Exception as ex:
         print(f"Quran API error: {ex}")
-        return "", 0, ""
+        return "", 0, "", ""
 
 
 async def fetch_rss_items(urls: List[str], limit: int = 5) -> List[str]:
     items: List[str] = []
     headers = {"User-Agent": "Mozilla/5.0 (compatible; ESP32Assistant/2.0)"}
-    async with httpx.AsyncClient(timeout=8.0, follow_redirects=True, headers=headers) as client:
+    async with httpx.AsyncClient(timeout=7.0, follow_redirects=True, headers=headers) as client:
         for u in urls:
             try:
                 r = await client.get(u)
@@ -528,12 +537,12 @@ async def fetch_cricket_context(query: str) -> List[str]:
         "https://www.espncricinfo.com/rss/content/story/feeds/0.xml",
         gnews,
     ]
-    return await fetch_rss_items(feeds, limit=6)
+    return await fetch_rss_items(feeds, limit=5)
 
 
 async def fetch_news_context(query: str) -> List[str]:
     cleaned = re.sub(
-        r"\b(news|khabar|khabrein|khabrai|headlines|live|today|aaj|ki|ka|ke|taza|latest|batao|bataiye|sunao|sunawo|tell|me|about|what|is|the)\b",
+        r"\b(news|khabar|khabrein|khabrai|headlines|live|today|aaj|ki|ka|ke|taza|latest|breaking|batao|bataiye|sunao|sunawo|tell|me|about|what|is|the)\b",
         "",
         query,
         flags=re.I,
@@ -550,18 +559,17 @@ async def fetch_news_context(query: str) -> List[str]:
         "https://feeds.bbci.co.uk/news/world/asia/rss.xml",
         "https://www.aljazeera.com/xml/rss/all.xml",
     ])
-    return await fetch_rss_items(feeds, limit=6)
+    return await fetch_rss_items(feeds, limit=5)
 
 
 async def fetch_weather_info(query: str) -> Tuple[str, Optional[float], Optional[float]]:
     lat, lon, place = 34.0837, 74.7973, "Srinagar"
-    # Check if user asked for another city
     m_city = re.search(r"(?:in|at|of|mein|me|ka|ki)\s+([a-zA-Z]{3,20})", query, flags=re.I)
     if m_city:
         cand = m_city.group(1).strip()
         if cand.lower() not in {"aaj", "today", "abhi", "now", "kaisa", "weather", "mausam", "mosam", "kya", "hai"}:
             try:
-                async with httpx.AsyncClient(timeout=6.0) as client:
+                async with httpx.AsyncClient(timeout=5.0) as client:
                     g = await client.get(
                         f"https://geocoding-api.open-meteo.com/v1/search?name={urllib.parse.quote(cand)}&count=1"
                     )
@@ -573,9 +581,9 @@ async def fetch_weather_info(query: str) -> Tuple[str, Optional[float], Optional
     try:
         url = (
             f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}"
-            "&current=temperature_2m,relative_humidity_2m,wind_speed_10m&timezone=Asia%2FKolkata"
+            "&current=temperature_2m,wind_speed_10m&timezone=Asia%2FKolkata"
         )
-        async with httpx.AsyncClient(timeout=8.0) as client:
+        async with httpx.AsyncClient(timeout=7.0) as client:
             r = await client.get(url)
             if r.status_code == 200:
                 cur = r.json().get("current", {})
@@ -586,31 +594,25 @@ async def fetch_weather_info(query: str) -> Tuple[str, Optional[float], Optional
 
 
 async def call_groq_bilingual(system_prompt: str, user_prompt: str, lang: str, max_tokens: int = 420) -> Optional[Tuple[str, str]]:
-    """Returns (display_text, tts_text) tailored strictly to UR / EN / AR."""
+    """Rock-solid plain-text DISPLAY:/VOICE: parser (zero JSON crashes)."""
     if not RAW_KEYS:
+        print("ERROR: No GROQ_API_KEY configured!")
         return None
 
     if lang == "UR":
         format_rule = (
-            "Respond ONLY as a valid JSON object with two keys: "
-            '{"display": "...", "tts": "..."}. '
-            "'display' MUST be natural, crystal-clear Roman Urdu using plain English A-Z letters and 0-9 numbers only (NO Urdu script, NO markdown, NO quotes inside text). "
-            "'tts' MUST be the EXACT same answer written in natural Urdu script (اردو) so a male Urdu voice reads it fluently with authentic pronunciation. "
-            "Keep sentence structure identical between display and tts so they sync cleanly."
+            "Reply using EXACTLY these two lines and nothing else:\n"
+            "DISPLAY: <Same answer in crystal-clear Roman Urdu using plain English A-Z letters and 0-9 numbers only, NO Urdu script, NO markdown>\n"
+            "VOICE: <Exact same answer in natural, fluent Urdu script (اردو) so a male Urdu voice reads it smoothly>\n"
+            "Both lines must have the exact same meaning and sentence count."
         )
     elif lang == "AR":
         format_rule = (
-            "Respond ONLY as a valid JSON object with two keys: "
-            '{"display": "...", "tts": "..."}. '
-            "Both 'display' and 'tts' MUST be in clear, accurate Modern Standard Arabic. "
-            "No markdown, no bullet symbols, no Latin letters."
+            "Reply in clear, accurate Modern Standard Arabic only. No markdown, no asterisks, no Latin letters."
         )
     else:
         format_rule = (
-            "Respond ONLY as a valid JSON object with two keys: "
-            '{"display": "...", "tts": "..."}. '
-            "Both 'display' and 'tts' MUST be identical clear, natural English. "
-            "No markdown, no bullet symbols, no asterisks."
+            "Reply in clear, natural English only. No markdown, no bullet symbols, no asterisks."
         )
 
     full_sys = system_prompt + "\n\n" + format_rule
@@ -618,91 +620,102 @@ async def call_groq_bilingual(system_prompt: str, user_prompt: str, lang: str, m
     for key in RAW_KEYS:
         for model in GROQ_MODELS:
             try:
-                async with httpx.AsyncClient(timeout=22.0) as client:
-                    payload = {
-                        "model": model,
-                        "messages": [
-                            {"role": "system", "content": full_sys},
-                            {"role": "user", "content": user_prompt},
-                        ],
-                        "max_tokens": max_tokens,
-                        "temperature": 0.3,
-                        "response_format": {"type": "json_object"},
-                    }
+                async with httpx.AsyncClient(timeout=12.0) as client:
                     resp = await client.post(
                         "https://api.groq.com/openai/v1/chat/completions",
                         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                        json=payload,
+                        json={
+                            "model": model,
+                            "messages": [
+                                {"role": "system", "content": full_sys},
+                                {"role": "user", "content": user_prompt},
+                            ],
+                            "max_tokens": max_tokens,
+                            "temperature": 0.3,
+                        },
                     )
-                    if resp.status_code == 400:
-                        # Retry without json_object constraint if a model doesn't support it
-                        payload.pop("response_format", None)
-                        resp = await client.post(
-                            "https://api.groq.com/openai/v1/chat/completions",
-                            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                            json=payload,
-                        )
                     if resp.status_code == 200:
                         raw = resp.json()["choices"][0]["message"]["content"].strip()
                         raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.S).strip()
-                        m_json = re.search(r"\{.*\}", raw, flags=re.S)
-                        if m_json:
-                            obj = json.loads(m_json.group(0))
-                            disp = str(obj.get("display") or "").strip()
-                            tts = str(obj.get("tts") or disp).strip()
-                            if lang == "AR":
-                                disp = clean_arabic_display(disp)
-                            else:
-                                disp = clean_ascii(disp)
-                            if disp and tts:
-                                return disp, tts
-                        # Fallback if plain text returned
-                        fallback_disp = clean_arabic_display(raw) if lang == "AR" else clean_ascii(raw)
-                        if fallback_disp:
-                            return fallback_disp, raw
-                    print(f"Groq {model} ({resp.status_code}): {resp.text[:140]}")
+
+                        if lang == "UR":
+                            m_disp = re.search(r"DISPLAY:\s*(.+?)(?=\nVOICE:|\Z)", raw, flags=re.S | re.I)
+                            m_voice = re.search(r"VOICE:\s*(.+)", raw, flags=re.S | re.I)
+                            if m_disp and m_voice:
+                                disp = clean_ascii(m_disp.group(1))
+                                voice = re.sub(r"[*_#`~]+", "", m_voice.group(1)).strip()
+                                if disp and voice:
+                                    return disp, voice
+                            # Clean fallback if model replied without tags
+                            disp_fb = clean_ascii(raw)
+                            if disp_fb:
+                                return disp_fb, raw
+                            return "Jawab tayyar hai.", raw
+
+                        if lang == "AR":
+                            ar_clean = clean_arabic_display(raw)
+                            if ar_clean:
+                                return ar_clean, ar_clean
+                        else:
+                            en_clean = clean_ascii(raw)
+                            if en_clean:
+                                return en_clean, en_clean
+
+                    print(f"Groq {model} ({resp.status_code}): {resp.text[:160]}")
             except Exception as ex:
-                print(f"Groq {model} error: {ex}")
+                print(f"Groq {model} exception: {ex}")
     return None
 
 
 async def wiki_fallback(query: str) -> Tuple[str, str]:
     clean_q = re.sub(
-        r"\b(kya|hai|hain|ka|ki|ke|what|is|are|who|tell|me|about|batao|bataiye|maloomat)\b",
+        r"\b(kya|hai|hain|he|ka|ki|ke|what|is|are|who|tell|me|about|batao|bataiye|sunao|maloomat)\b",
         "",
         query,
         flags=re.I,
     ).strip()
-    clean_q = clean_ascii(clean_q) or clean_ascii(query) or "Srinagar"
+    clean_q = clean_ascii(clean_q) or clean_ascii(query)
+    if not clean_q:
+        msg = "Abhi AI server busy hai. Thodi der baad dobara poochein."
+        return msg, "ابھی اے آئی سرور مصروف ہے۔ تھوڑی دیر بعد دوبارہ پوچھیں۔"
+
+    headers = {"User-Agent": "ESP32VoiceAssistant/2.0"}
     try:
-        url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{urllib.parse.quote(clean_q[:80])}"
-        async with httpx.AsyncClient(timeout=8.0, headers={"User-Agent": "ESP32Assistant/2.0"}) as client:
+        async with httpx.AsyncClient(timeout=8.0, headers=headers) as client:
+            # First search Wikipedia for exact article title
+            s_url = (
+                "https://en.wikipedia.org/w/api.php?action=query&list=search&srlimit=1&format=json&srsearch="
+                + urllib.parse.quote(clean_q[:80])
+            )
+            sr = await client.get(s_url)
+            title = clean_q
+            if sr.status_code == 200:
+                hits = sr.json().get("query", {}).get("search", [])
+                if hits:
+                    title = hits[0].get("title", clean_q)
+
+            url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{urllib.parse.quote(title)}"
             r = await client.get(url)
             if r.status_code == 200:
                 ext = (r.json().get("extract") or "").strip()
                 if ext:
                     sents = re.split(r"(?<=[.!?])\s+", ext)
-                    ans = clean_ascii(" ".join(sents[:3]))[:320]
+                    ans = clean_ascii(" ".join(sents[:2]))[:280]
                     if ans:
                         return ans, ans
     except Exception as ex:
         print(f"Wiki fallback error: {ex}")
     msg = "Abhi AI server busy hai. Thodi der baad dobara poochein."
-    return msg, msg
+    return msg, "ابھی اے آئی سرور مصروف ہے۔ تھوڑی دیر بعد دوبارہ پوچھیں۔"
 
 
 async def transcribe_wav(wav_bytes: bytes) -> str:
     if not RAW_KEYS:
         return ""
-    hint_prompt = (
-        "Urdu, Hindi, English, Arabic voice assistant in Srinagar Kashmir. "
-        "Quran, Surah, Fatiha, Baqarah, Yasin, Rahman, Mulk, Kahf, Ikhlas, Ayat, Tafseer, Tarjuma, "
-        "Namaz, Fajr, Zohar, Asar, Maghrib, Esha, Cricket, Live Score, News, Khabrein, Mausam, "
-        "Monster face on, Monster face off, Volume up, Volume down, Stop, Mute."
-    )
+    hint_prompt = "Surah, Tafseer, Tarjuma, Namaz, Cricket, News, Educational, Urdu, English, Arabic."
     for key in RAW_KEYS:
         try:
-            async with httpx.AsyncClient(timeout=22.0) as client:
+            async with httpx.AsyncClient(timeout=18.0) as client:
                 files = {"file": ("audio.wav", wav_bytes, "audio/wav")}
                 data = {
                     "model": "whisper-large-v3-turbo",
@@ -720,10 +733,43 @@ async def transcribe_wav(wav_bytes: bytes) -> str:
                     if txt.lower().strip(" .!?,") in WHISPER_HALLUCINATIONS or len(txt) < 2:
                         return ""
                     return txt
-                print(f"Whisper ({resp.status_code}): {resp.text[:140]}")
+                print(f"Whisper ({resp.status_code}): {resp.text[:160]}")
         except Exception as e:
             print(f"Whisper error: {e}")
     return ""
+
+
+async def fetch_google_tts_mp3(text: str, lang_code: str) -> bytes:
+    """Reliable chunked MP3 TTS fallback so speaker is NEVER silent."""
+    tl = GTTS_LANG_MAP.get(lang_code, "ur")
+    words = text.split()
+    chunks: List[str] = []
+    cur = ""
+    for w in words:
+        if len(cur) + len(w) + 1 <= 165:
+            cur = (cur + " " + w).strip()
+        else:
+            if cur:
+                chunks.append(cur)
+            cur = w[:165]
+    if cur:
+        chunks.append(cur)
+
+    mp3_bytes = bytearray()
+    headers = {"User-Agent": "Mozilla/5.0"}
+    async with httpx.AsyncClient(timeout=12.0, headers=headers) as client:
+        for ch in chunks[:8]:
+            url = (
+                f"https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob"
+                f"&tl={tl}&q={urllib.parse.quote(ch)}"
+            )
+            try:
+                r = await client.get(url)
+                if r.status_code == 200 and len(r.content) > 200:
+                    mp3_bytes.extend(r.content)
+            except Exception as ex:
+                print(f"Google TTS chunk error: {ex}")
+    return bytes(mp3_bytes)
 
 
 async def make_tts_with_duration(text: str, voice_code: str) -> Tuple[str, int]:
@@ -731,38 +777,44 @@ async def make_tts_with_duration(text: str, voice_code: str) -> Tuple[str, int]:
     out_path = os.path.join(AUDIO_DIR, f"{fid}.mp3")
     voice = VOICE_MAP.get(voice_code, "ur-PK-AsadNeural")
     rate = SPEED_MAP.get(STATE["speed"], "+0%")
-    clean_text = re.sub(r"[*_#`~]+", "", text or "").strip() or "Ji bataiye."
+    clean_text = re.sub(r"[*_#`~]+", "", text or "").strip() or "جی بتائیے۔"
 
     audio_chunks = bytearray()
     last_end_ms = 0
+    tts_source = "edge"
 
-    for attempt in range(2):
-        try:
-            audio_chunks = bytearray()
-            last_end_ms = 0
-            use_voice = voice if attempt == 0 else "ur-PK-AsadNeural"
-            comm = edge_tts.Communicate(clean_text, voice=use_voice, rate=rate)
-            async for chunk in comm.stream():
-                ctype = chunk.get("type")
-                if ctype == "audio":
-                    audio_chunks.extend(chunk["data"])
-                elif ctype in ("WordBoundary", "SentenceBoundary"):
-                    end_ms = int((chunk.get("offset", 0) + chunk.get("duration", 0)) / 10000)
-                    if end_ms > last_end_ms:
-                        last_end_ms = end_ms
-            if len(audio_chunks) > 500:
-                break
-        except Exception as ex:
-            print(f"Edge-TTS attempt {attempt + 1} error: {ex}")
+    # 1. Primary: Edge-TTS natural male voice
+    try:
+        comm = edge_tts.Communicate(clean_text, voice=voice, rate=rate)
+        async for chunk in comm.stream():
+            ctype = chunk.get("type")
+            if ctype == "audio":
+                audio_chunks.extend(chunk["data"])
+            elif ctype in ("WordBoundary", "SentenceBoundary"):
+                end_ms = int((chunk.get("offset", 0) + chunk.get("duration", 0)) / 10000)
+                if end_ms > last_end_ms:
+                    last_end_ms = end_ms
+    except Exception as ex:
+        print(f"Edge-TTS error: {ex}")
+
+    # 2. Automatic backup if Edge-TTS failed or returned empty bytes
+    if len(audio_chunks) < 800:
+        tts_source = "google-fallback"
+        print("Edge-TTS empty/blocked -> using Google TTS fallback")
+        fb_bytes = await fetch_google_tts_mp3(clean_text, voice_code)
+        audio_chunks = bytearray(fb_bytes)
+        last_end_ms = 0
 
     with open(out_path, "wb") as f:
         f.write(audio_chunks)
 
-    # Edge-TTS outputs 24kHz 48kbps MP3 (~6000 bytes/sec)
-    est_ms = int((len(audio_chunks) / 6000.0) * 1000) if audio_chunks else 2500
-    total_ms = max(last_end_ms, est_ms, 1400)
+    # Edge-TTS is ~6000 B/s (48kbps); Google TTS is ~4000 B/s (32kbps)
+    bps = 6000.0 if tts_source == "edge" else 4000.0
+    est_ms = int((len(audio_chunks) / bps) * 1000) if audio_chunks else 2500
+    total_ms = max(last_end_ms, est_ms, 1500)
+    print(f"TTS [{tts_source}] bytes={len(audio_chunks)} ms={total_ms}")
 
-    # Cleanup files older than 5 minutes
+    # Cleanup old audio files
     now_t = time.time()
     for fn in os.listdir(AUDIO_DIR):
         fp = os.path.join(AUDIO_DIR, fn)
@@ -772,17 +824,15 @@ async def make_tts_with_duration(text: str, voice_code: str) -> Tuple[str, int]:
         except Exception:
             pass
 
-    return f"/audio/{fid}", total_ms
+    return f"/audio/{fid}.mp3", total_ms
 
 
 def build_synced_pages(display_text: str, total_ms: int, lang: str) -> List[Dict]:
-    """Split display text into OLED-sized chunks with proportional ms matching audio."""
     max_chars = 36 if lang == "AR" else 70
     txt = (display_text or "").strip()
     if not txt:
         return [{"t": "...", "ms": max(1500, total_ms)}]
 
-    # First split by natural sentence boundaries
     raw_sents = [s.strip() for s in re.split(r"(?<=[.!?؟۔])\s+", txt) if s.strip()]
     chunks: List[str] = []
 
@@ -803,7 +853,6 @@ def build_synced_pages(display_text: str, total_ms: int, lang: str) -> List[Dict
             if cur:
                 chunks.append(cur)
 
-    # Cap at 16 pages so ESP32 JSON buffer stays compact
     chunks = chunks[:16]
     if not chunks:
         chunks = [txt[:max_chars]]
@@ -818,18 +867,17 @@ def build_synced_pages(display_text: str, total_ms: int, lang: str) -> List[Dict
 
 
 async def generate_answer(heard: str, lang: str) -> Tuple[str, str, str]:
-    """Returns (header, display_text, tts_text)."""
     now = get_ist_now()
     hijri = get_hijri_str()
     low = heard.lower()
 
     # 1. Namaz timings
-    if any(w in low for w in ["namaz", "nimaz", "meeqat", "miqat", "prayer time", "salah time", "نماز", "صلاة", "اوقات"]):
+    if any(w in low for w in ["namaz", "nimaz", "meeqat", "miqat", "prayer time", "salah time", "نماز", "صلاة", "اوقات", "नमाज", "नमाज़"]):
         disp, tts = build_namaz_response(lang)
         return "NAMAZ", disp, tts
 
     # 2. Time / Date / Hijri
-    if any(w in low for w in ["time", "waqt", "baj", "baje", "date", "tareekh", "tarikh", "hijri", "وقت", "تاریخ", "ہجری", "التاريخ", "الساعة"]) and not any(w in low for w in ["namaz", "match", "cricket"]):
+    if any(w in low for w in ["time", "waqt", "baj", "baje", "date", "tareekh", "tarikh", "hijri", "وقت", "تاریخ", "ہجری", "التاريخ", "الساعة", "वक्त", "तारीख"]) and not any(w in low for w in ["namaz", "match", "cricket"]):
         t_str = now.strftime("%I:%M %p").lstrip("0")
         d_str = now.strftime("%A, %d %B %Y")
         if lang == "AR":
@@ -843,7 +891,7 @@ async def generate_answer(heard: str, lang: str) -> Tuple[str, str, str]:
         return "TIME", ans, ans
 
     # 3. Weather
-    if any(w in low for w in ["mausam", "mosam", "weather", "temperature", "temp", "barish", "موسم", "الطقس"]):
+    if any(w in low for w in ["mausam", "mosam", "weather", "temperature", "temp", "barish", "موسم", "الطقس", "मौसम"]):
         place, temp, wind = await fetch_weather_info(heard)
         if temp is not None:
             if lang == "AR":
@@ -857,37 +905,30 @@ async def generate_answer(heard: str, lang: str) -> Tuple[str, str, str]:
             return "WEATHER", ans, ans
 
     # 4. Quran Translation / Tafseer
-    is_tafseer = any(w in low for w in [
-        "tafseer", "tafsir", "tarjuma", "translation", "meaning", "mafhoom", "matlab",
-        "ayat", "aayat", "ayah", "verse", "تفسیر", "ترجمہ", "آیت", "آیات", "تفسير", "آية", "معنى",
-        "ayatul kursi", "ayat ul kursi", "آیت الکرسی"
-    ])
-    if is_tafseer:
+    if is_tafseer_intent(heard):
         s_num, s_ay, e_ay, is_last = parse_quran_request(heard)
         if s_num:
-            s_name, total_ay, verse_block = await fetch_quran_verses(s_num, s_ay, e_ay, is_last)
+            s_name, total_ay, verse_block, ur_fb = await fetch_quran_verses(s_num, s_ay, e_ay, is_last)
             if verse_block:
                 sys_p = (
-                    "You are an authentic, scholarly Islamic teacher giving crystal-clear Quran translation and Tafseer. "
-                    "Use ONLY the verified Quran verses provided below—never invent or misquote any ayah. "
-                    "Explain each requested ayah clearly in easy, warm language so the listener understands the exact meaning and lesson. "
-                    "Since multiple ayahs or deep tafseer may be asked, give a complete, well-paced explanation (do not cut off important ayahs)."
+                    "You are an authentic Islamic scholar giving easy, clear Quran Translation and Tafseer. "
+                    "Explain ONLY the verified ayahs provided below clearly and accurately in warm, simple language. "
+                    "Cover every requested ayah cleanly without skipping."
                 )
                 usr_p = f"User asked: {heard}\nSurah: {s_name} (Total {total_ay} ayahs)\nVerified Verses:\n{verse_block}"
-                res = await call_groq_bilingual(sys_p, usr_p, lang, max_tokens=650)
+                res = await call_groq_bilingual(sys_p, usr_p, lang, max_tokens=620)
                 if res:
                     return f"TAFSEER {s_num}", res[0], res[1]
-                # Fallback straight from Al-Quran Cloud if Groq busy
-                plain = clean_ascii(verse_block.split("EN:")[-1])[:260]
-                return f"SURAH {s_num}", plain, plain
+                en_fb = clean_ascii(verse_block)[:260]
+                return f"TAFSEER {s_num}", en_fb, (ur_fb if lang == "UR" and ur_fb else en_fb)
 
-    # 5. Live Cricket News / Scores
-    if any(w in low for w in ["cricket", "ipl", "t20", "odi", "test match", "score", "virat", "rohit", "babar", "india match", "pakistan match", "کرکٹ", "اسکور", "میچ"]):
+    # 5. Live Cricket
+    if any(w in low for w in ["cricket", "ipl", "t20", "odi", "test match", "score", "virat", "rohit", "babar", "کرکٹ", "اسکور", "میچ", "क्रिकेट"]):
         headlines = await fetch_cricket_context(heard)
         if headlines:
             sys_p = (
                 f"You are a live cricket presenter. Today is {now.strftime('%d %b %Y, %I:%M %p IST')}. "
-                "Report ONLY facts present in the live cricket headlines below. Be accurate, clear, and concise (3 to 4 crisp sentences)."
+                "Report ONLY facts from the live cricket headlines below in 3 crisp sentences."
             )
             usr_p = f"User question: {heard}\nLive Cricket Feeds:\n" + "\n".join(f"- {h}" for h in headlines)
             res = await call_groq_bilingual(sys_p, usr_p, lang, max_tokens=320)
@@ -896,32 +937,30 @@ async def generate_answer(heard: str, lang: str) -> Tuple[str, str, str]:
             fb = clean_ascii(". ".join(headlines[:2]))[:220]
             return "CRICKET", fb, fb
 
-    # 6. Live News (Any topic)
-    if any(w in low for w in ["news", "khabar", "khabrein", "khabrai", "headlines", "taza", "latest", "breaking", "خبر", "خبریں", "أخبار"]):
+    # 6. Live News
+    if any(w in low for w in ["news", "khabar", "khabrein", "khabrai", "headlines", "taza", "latest", "breaking", "خبر", "خبریں", "أخبار", "खबर", "खबरें"]):
         headlines = await fetch_news_context(heard)
         if headlines:
             sys_p = (
                 f"You are an accurate live news anchor. Today is {now.strftime('%d %b %Y, %I:%M %p IST')}. "
-                "Summarize the most relevant live headlines below for the user's requested topic clearly in 3 to 4 sentences. "
-                "Do not invent facts not in the headlines."
+                "Summarize the most relevant live headlines below clearly in 3 sentences without inventing facts."
             )
             usr_p = f"User asked: {heard}\nLive Headlines:\n" + "\n".join(f"- {h}" for h in headlines)
-            res = await call_groq_bilingual(sys_p, usr_p, lang, max_tokens=360)
+            res = await call_groq_bilingual(sys_p, usr_p, lang, max_tokens=340)
             if res:
                 return "NEWS", res[0], res[1]
             fb = clean_ascii(". ".join(headlines[:2]))[:220]
             return "NEWS", fb, fb
 
-    # 7. General Knowledge + Full Islamic Knowledge (Adaptive length)
+    # 7. All General Knowledge + Full Islamic Knowledge
     sys_p = (
-        f"You are an exceptionally accurate, knowledgeable all-rounder male voice assistant based in Srinagar, Kashmir. "
+        f"You are an accurate, all-rounder male voice assistant based in Srinagar, Kashmir. "
         f"Today is {now.strftime('%A, %d %B %Y, %I:%M %p IST')} (Hijri: {hijri}). "
-        "You excel at ALL general knowledge (science, history, geography, technology, math, daily life) AND full authentic Islamic knowledge (Quran, Hadith, Seerah, Fiqh, Duas, Prophets). "
-        "ADAPTIVE LENGTH RULE: For simple direct factual questions, answer crisply in 1 to 2 short sentences. "
-        "For detailed, explanatory, Islamic, or story questions, give a thorough, clear 4 to 6 sentence answer. "
-        "Never fabricate facts, Hadith references, or verses. Be direct and natural."
+        "You answer ALL general knowledge (education, philosophy, science, history, geography, tech, math) AND authentic Islamic knowledge (Quran, Hadith, Seerah, Fiqh, Duas). "
+        "ADAPTIVE LENGTH: Short direct questions get 2 clear sentences; detailed or explanatory questions get 4 to 5 clear sentences. "
+        "Never fabricate facts or references."
     )
-    res = await call_groq_bilingual(sys_p, heard, lang, max_tokens=550)
+    res = await call_groq_bilingual(sys_p, heard, lang, max_tokens=500)
     if res:
         return "ANSWER", res[0], res[1]
 
@@ -941,12 +980,13 @@ async def root():
     }
 
 
+@app.get("/audio/{fid}.mp3")
 @app.get("/audio/{fid}")
 async def get_audio(fid: str):
     safe_id = re.sub(r"[^a-zA-Z0-9]", "", fid)
     fp = os.path.join(AUDIO_DIR, f"{safe_id}.mp3")
-    if os.path.exists(fp):
-        return FileResponse(fp, media_type="audio/mpeg")
+    if os.path.exists(fp) and os.path.getsize(fp) > 200:
+        return FileResponse(fp, media_type="audio/mpeg", filename=f"{safe_id}.mp3")
     return JSONResponse({"error": "not found"}, status_code=404)
 
 
@@ -979,7 +1019,7 @@ async def chat(request: Request):
     low = heard.lower()
 
     # 1. Stop / Mute
-    if any(k in low for k in ["stop", "ruko", "band karo", "chup", "بند کرو", "رکو", "توقف"]) and "monster" not in low and "face" not in low:
+    if any(k in low for k in ["stop", "ruko", "band karo", "chup", "بند کرو", "رکو", "توقف", "रुको"]) and "monster" not in low and "face" not in low:
         return {
             "action": "STOP",
             "lang": lang,
@@ -1095,16 +1135,12 @@ async def chat(request: Request):
                 "monster": True,
             }
 
-    # 4. Full Quran Audio Stream (when NOT asking for tafseer/translation)
-    is_tafseer = any(w in low for w in [
-        "tafseer", "tafsir", "tarjuma", "translation", "meaning", "mafhoom", "matlab",
-        "ayat", "aayat", "ayah", "verse", "تفسیر", "ترجمہ", "آیت", "آیات", "تفسير", "آية"
-    ])
+    # 4. Quran Audio Stream (ONLY when NOT asking for Tafseer/Translation/Ayah meaning)
     is_quran_play = any(w in low for w in [
         "surah", "sura", "quran", "tilawat", "recite", "recitation",
-        "سورہ", "سورة", "قرآن", "تلاوت"
+        "سورہ", "سورة", "قرآن", "تلاوت", "सूरह", "कुरान"
     ])
-    if is_quran_play and not is_tafseer:
+    if is_quran_play and not is_tafseer_intent(heard):
         s_num, _, _, _ = parse_quran_request(heard)
         num = s_num or 1
         stream_url = f"https://server8.mp3quran.net/afs/{num:03d}.mp3"
@@ -1119,7 +1155,7 @@ async def chat(request: Request):
             "monster": STATE["monster"],
         }
 
-    # 5. All Other Knowledge / Tafseer / Cricket / Live News / Weather / Namaz / Time
+    # 5. Tafseer / GK / Islamic / Cricket / News / Weather / Namaz / Time
     header, disp, tts = await generate_answer(heard, lang)
     audio_url, total_ms = await make_tts_with_duration(tts, voice_code)
     pages = build_synced_pages(disp, total_ms, lang)
