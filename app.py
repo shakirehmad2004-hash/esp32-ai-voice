@@ -652,12 +652,10 @@ async def fetch_quran_verses(
                 s_idx = max(0, total - start_ay)
                 e_idx = total
             elif start_ay is not None:
-                # Specific ayah or range (e.g. 20 or 180..185) -> fetch ONLY that exact slice
                 s_idx = max(0, min(total - 1, start_ay - 1))
                 target_end = end_ay if end_ay is not None else start_ay
                 e_idx = max(s_idx + 1, min(total, target_end))
             else:
-                # Surah overview/tafseer without specific ayah -> concise first 3 ayahs + nazool/tafseer
                 s_idx = 0
                 e_idx = min(total, 3)
 
@@ -895,7 +893,7 @@ async def call_groq_bilingual(system_prompt: str, user_prompt: str, lang: str, l
         length_rule = "LENGTH MODE: BRIEF. Give a short, crisp answer in 1 to 2 clear sentences."
         max_tokens = 260
     elif length_mode == "long":
-        length_rule = "LENGTH MODE: DETAILED / LONG. Give a thorough, well-structured, complete answer with clear points and examples, ending cleanly."
+        length_rule = "LENGTH MODE: DETAILED / LONG. Give a thorough, well-structured, complete answer with key points and examples, ending cleanly."
         max_tokens = 1200
     else:
         length_rule = "LENGTH MODE: BALANCED. Give a clear, accurate, complete answer in 3 to 4 sentences."
@@ -962,7 +960,8 @@ async def call_groq_bilingual(system_prompt: str, user_prompt: str, lang: str, l
                             disp_fb = clean_ascii(voice_only)
                             if disp_fb and voice_only:
                                 return disp_fb, voice_only
-                            return "Jawab tayyar hai.", voice_only or "جواب تیار ہے۔"
+                            if voice_only:
+                                return voice_only[:180], voice_only
 
                         if lang == "AR":
                             ar_clean = clean_arabic_display(raw)
@@ -1023,7 +1022,7 @@ async def wiki_fallback(query: str) -> Tuple[str, str]:
 async def transcribe_wav(wav_bytes: bytes) -> str:
     if not RAW_KEYS:
         return ""
-    hint_prompt = "Surah Fatah ayat number 20 tarjuma, Is se aage tarjuma batao isi surah ka, Surah Baqarah aayat 180 se 185 ki tafseer sunao, Brief mein batao, Tafseel se batao."
+    hint_prompt = "Educational philosophy kya hai, Surah Fatah ayat number 20 tarjuma, Is se aage tarjuma batao isi surah ka, Surah Baqarah aayat 180 se 185 ki tafseer sunao, Brief mein batao, Tafseel se batao."
     for key in RAW_KEYS:
         try:
             async with httpx.AsyncClient(timeout=18.0) as client:
