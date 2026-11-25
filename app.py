@@ -299,6 +299,7 @@ def format_urdu_period_and_time(now: datetime.datetime) -> str:
 
 def clean_ascii(text: str) -> str:
     s = re.sub(r"<think>.*?</think>", "", text or "", flags=re.S)
+    s = re.sub(r"\b(?:DISPLAY|VOICE)\s*:\s*", "", s, flags=re.I)
     s = re.sub(r"[^\x20-\x7E]", " ", s)
     s = re.sub(r"[*_#`~\"']+", "", s)
     s = re.sub(r"\s+", " ", s).strip()
@@ -341,15 +342,12 @@ def detect_language(text: str) -> str:
     if any(w in low for w in ["urdu mein", "in urdu", "hindi mein", "اردو میں"]):
         return "UR"
 
-    # Devanagari -> treat as Urdu/Hindi mode (Roman Urdu display + Urdu male voice)
     if re.search(r"[\u0900-\u097F]", text):
         return "UR"
 
-    # Urdu-specific Perso-Arabic letters
     if re.search(r"[\u0679\u0688\u0691\u06BA\u06D2\u06C1\u06BE\u06AF\u067E\u0686\u0698\u06CC]", text):
         return "UR"
 
-    # Common Roman Urdu / Urdu / Hindi words or transliteration glitches
     urdu_markers = {
         "کے", "کا", "کی", "میں", "ہے", "ہیں", "تھا", "بتاؤ", "بتائیں", "سناؤ", "سنائیں",
         "کیا", "کیسے", "آج", "کل", "کون", "کہاں", "نماز", "موسم", "خبریں", "تفسیر", "پہلی",
@@ -494,7 +492,6 @@ def parse_quran_request(text: str) -> Tuple[Optional[int], Optional[int], Option
 async def fetch_quran_verses(
     surah_num: int, start_ay: Optional[int], end_ay: Optional[int], is_last: bool
 ) -> Tuple[str, str, int, str, str]:
-    """Returns (english_name, arabic_name, total_ayahs, verse_block, ur_plain_fallback)."""
     url = f"https://api.alquran.cloud/v1/surah/{surah_num}/editions/quran-uthmani,ur.jalandhry,en.sahih"
     try:
         async with httpx.AsyncClient(timeout=12.0) as client:
@@ -517,7 +514,8 @@ async def fetch_quran_verses(
                 e_idx = total
             elif start_ay is not None:
                 s_idx = max(0, min(total - 1, start_ay - 1))
-                e_idx = max(s_idx + 1, min(total, (end_ay or start_ay)))
+                target_end = end_ay if end_ay is not None else start_ay
+                e_idx = max(s_idx + 1, min(total, target_end))
             else:
                 s_idx = 0
                 e_idx = min(total, 6)
@@ -684,8 +682,8 @@ async def call_groq_bilingual(system_prompt: str, user_prompt: str, lang: str, m
         format_rule = (
             "STRICT LANGUAGE LOCK: The user asked in URDU/ROMAN URDU.\n"
             "Reply using EXACTLY these two lines and nothing else:\n"
-            "DISPLAY: <Complete answer in Roman Urdu (Latin A-Z letters and 0-9 numbers only, NO Urdu script, NO English sentences unless quoting a term)>\n"
-            "VOICE: <Exact same complete answer in natural, fluent Urdu script (اردو) so a male Urdu voice reads it cleanly>\n"
+            "DISPLAY: <Clean answer in Roman Urdu using A-Z letters and 0-9 numbers only; NO Urdu script, NO English sentences, NO words like DISPLAY or VOICE>\n"
+            "VOICE: <Exact same clean answer in natural, fluent Urdu script (اردو) for a male Urdu voice>\n"
             "Never output English-only answers when lang is UR."
         )
     elif lang == "AR":
@@ -990,19 +988,20 @@ async def generate_answer(heard: str, lang: str) -> Tuple[str, str, str]:
             ans = f"In {place}, it is currently {temp} degrees Celsius with wind at {wind} km/h."
             return "WEATHER", ans, ans
 
-    # 4. Quran Tarjuma + Tafseer + Surah Detail (Makki/Madani + Waqt Ke Halaat)
+    # 4. Quran Tarjuma + Motabar Tafseer + Surah Detail (Nazool & Waqt Ke Halaat)
     s_num, s_ay, e_ay, is_last = parse_quran_request(heard)
-    if is_tafseer_intent(heard) or (s_num is not None and any(w in low for w in ["detail", "details", "tafseel", "tafsil", "mukammal", "poora", "pura", "kahan", "kab", "waqt", "halaat", "halat", "nazool", "nuzool", "shaan", "مکمل", "تفصیل", "حالات", "نزول"])):
+    detail_words = ["detail", "details", "tafseel", "tafsil", "mukammal", "poora", "pura", "kahan", "kab", "waqt", "halaat", "halat", "nazool", "nuzool", "shaan", "مکمل", "تفصیل", "حالات", "نزول"]
+    if is_tafseer_intent(heard) or (s_num is not None and any(w in low for w in detail_words)):
         if s_num:
             s_name_en, s_name_ar, total_ay, verse_block, ur_fb = await fetch_quran_verses(s_num, s_ay, e_ay, is_last)
             if verse_block:
                 sys_p = (
-                    "You are a trustworthy Islamic scholar following classical Sunni Tafseer (such as Tafseer-e-Usmani, Ma'ariful Quran, and Tafseer al-Jalalayn). "
-                    "Never invent personal opinions or strange metaphors. Keep every word respectful, accurate, and grounded in authentic Quranic tafseer.\n"
-                    "When Surah details/background/tafseer are asked, provide in order:\n"
-                    "1) Surah Name, Number, total ayahs, and whether it is Makki or Madani.\n"
-                    "2) Brief historical context / circumstances at the time of revelation (shaan-e-nuzool / waqt ke halaat).\n"
-                    "3) Clear tarjuma (translation/meaning) of the requested ayahs followed by concise, authentic tafseer."
+                    "You are a careful, authentic Sunni Islamic scholar (aligned with Tafseer-e-Usmani, Ma'ariful Quran, and Tafseer al-Jalalayn). "
+                    "Never invent personal opinions, psychology/nafsaniat metaphors, or unverified claims. Stick strictly to authentic Quranic meaning and classical shaan-e-nuzool.\n"
+                    "Present the answer in this clear order:\n"
+                    "1) Surah Name, Surah Number, total ayahs, and Makki or Madani status.\n"
+                    "2) Place of nazool and historical circumstances at that time (waqt ke halaat / shaan-e-nuzool).\n"
+                    "3) Clear tarjuma (translation) of the ayahs, followed by concise, authentic tafseer."
                 )
                 usr_p = (
                     f"User question: {heard}\n"
@@ -1226,7 +1225,6 @@ async def chat(request: Request):
             }
 
     s_num, _, _, _ = parse_quran_request(heard)
-    detail_words = ["detail", "details", "tafseel", "tafsil", "mukammal", "poora", "pura", "kahan", "kab", "waqt", "halaat", "halat", "nazool", "nuzool", "shaan", "مکمل", "تفصیل", "حالات", "نزول"]
     is_quran_play = any(w in low for w in [
         "surah", "sura", "sury", "suraj", "quran", "tilawat", "recite", "recitation",
         "سورہ", "سورة", "قرآن", "تلاوت", "सूरह", "कुरान"
