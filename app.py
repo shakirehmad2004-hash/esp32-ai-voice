@@ -28,19 +28,14 @@ RAW_KEYS = [
     if k.strip()
 ]
 
-# Backup list used only if live model discovery fails
 FALLBACK_GROQ_MODELS = [
-    "llama-3.3-70b-versatile",
-    "meta-llama/llama-4-maverick-17b-128e-instruct",
-    "meta-llama/llama-4-scout-17b-16e-instruct",
     "openai/gpt-oss-120b",
+    "qwen/qwen3.8-27b",
     "openai/gpt-oss-20b",
-    "qwen/qwen3-32b",
+    "llama-3.3-70b-versatile",
     "llama-3.1-8b-instant",
-    "gemma2-9b-it",
 ]
 
-# Cache of auto-discovered live Groq chat models per API key
 MODEL_CACHE: Dict[str, Tuple[float, List[str]]] = {}
 
 STATE = {
@@ -63,9 +58,9 @@ GTTS_LANG_MAP = {
 }
 
 SPEED_MAP = {
-    "Slow": "-15%",
+    "Slow": "-12%",
     "Norm": "+0%",
-    "Fast": "+18%",
+    "Fast": "+12%",
 }
 
 MEEQAT_ANCHORS = [
@@ -221,7 +216,8 @@ SURAH_NAMES: Dict[str, int] = {
     "kafirun": 109, "kafiroon": 109, "کافرون": 109,
     "nasr": 110, "نصر": 110,
     "masad": 111, "lahab": 111, "مسد": 111, "لہب": 111,
-    "ikhlas": 112, "ekhlas": 112, "iklas": 112, "qul huwallah": 112, "اخلاص": 112, "الإخلاص": 112, "इखलास": 112, "इख़लास": 112,
+    "ikhlas": 112, "ekhlas": 112, "iklas": 112, "eclás": 112, "eklaský": 112,
+    "qul huwallah": 112, "اخلاص": 112, "الإخلاص": 112, "الإخلاسية": 112, "इखलास": 112, "इख़लास": 112,
     "falaq": 113, "falak": 113, "فلق": 113, "الفلق": 113, "फलक": 113,
     "naas": 114, "nas": 114, "ناس": 114, "الناس": 114, "नास": 114,
 }
@@ -239,10 +235,16 @@ NUMBER_WORDS = {
     "das": 10, "ten": 10, "دس": 10, "عشر": 10, "दस": 10,
 }
 
-HIJRI_MONTHS = [
+HIJRI_MONTHS_EN = [
     "Muharram", "Safar", "Rabi I", "Rabi II",
     "Jumada I", "Jumada II", "Rajab", "Shaban",
     "Ramadan", "Shawwal", "Dhul Qadah", "Dhul Hijjah"
+]
+
+HIJRI_MONTHS_UR = [
+    "محرم الحرام", "صفر المظفر", "ربیع الاول", "ربیع الثانی",
+    "جمادی الاول", "جمادی الثانی", "رجب المرجب", "شعبان المعظم",
+    "رمضان المبارک", "شوال المکرم", "ذوالقعدہ", "ذوالحجہ"
 ]
 
 WHISPER_HALLUCINATIONS = {
@@ -255,7 +257,7 @@ def get_ist_now() -> datetime.datetime:
     return datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5, minutes=30)))
 
 
-def gregorian_to_hijri(year: int, month: int, day: int) -> Tuple[int, str, int]:
+def gregorian_to_hijri(year: int, month: int, day: int) -> Tuple[int, str, str, int]:
     a = (14 - month) // 12
     y = year + 4800 - a
     m = month + 12 * a - 3
@@ -264,18 +266,35 @@ def gregorian_to_hijri(year: int, month: int, day: int) -> Tuple[int, str, int]:
     n = (l - 1) // 10631
     l = l - 10631 * n + 354
     j = ((10985 - l) // 5316) * ((50 * l) // 17719) + (l // 5670) * ((43 * l) // 15238)
-    l = l - ((30 - j) // 15) * ((17719 * j) // 50) - (j // 16) * ((15238 * j) // 43) + 29
-    h_month = (24 * l) // 709
-    h_day = l - (709 * h_month) // 24
-    h_year = 30 * n + j - 30
-    m_name = HIJRI_MONTHS[max(0, min(11, h_month - 1))]
-    return h_day, m_name, h_year
+    l = l - ((30 - j) // 15) * ((17719 * j) // 50) - (j // 16) * ((15238 * j) / 43) + 29
+    h_month = int((24 * l) // 709)
+    h_day = int(l - (709 * h_month) // 24)
+    h_year = int(30 * n + j - 30)
+    idx = max(0, min(11, h_month - 1))
+    return h_day, HIJRI_MONTHS_EN[idx], HIJRI_MONTHS_UR[idx], h_year
 
 
 def get_hijri_str() -> str:
     now = get_ist_now()
-    hd, hm, hy = gregorian_to_hijri(now.year, now.month, now.day)
-    return f"{hd} {hm} {hy}"
+    hd, hm_en, _, hy = gregorian_to_hijri(now.year, now.month, now.day)
+    return f"{hd} {hm_en} {hy}"
+
+
+def format_urdu_period_and_time(now: datetime.datetime) -> str:
+    h24 = now.hour
+    m = now.minute
+    h12 = h24 % 12 or 12
+    if 4 <= h24 < 12:
+        period = "صبح"
+    elif 12 <= h24 < 17:
+        period = "دوپہر"
+    elif 17 <= h24 < 20:
+        period = "شام"
+    else:
+        period = "رات"
+    if m == 0:
+        return f"{period} کے {h12} بجے ہیں"
+    return f"{period} کے {h12} بج کر {m} منٹ ہوئے ہیں"
 
 
 def clean_ascii(text: str) -> str:
@@ -298,8 +317,9 @@ def is_tafseer_intent(text: str) -> bool:
     low = (text or "").lower()
     keywords = [
         "tafseer", "tafsir", "tafsīr", "tafser", "tapsir", "tasfir", "tabseer", "takseer", "taseer",
-        "tarjuma", "tarjama", "translation", "meaning", "mafhoom", "matlab", "explain", "sharah",
-        "samjhao", "samjhaiye", "ayat", "aayat", "ayah", "verse", "ayatul kursi", "ayat ul kursi",
+        "tafsiersonal", "psiersonal", "tarjuma", "tarjama", "translation", "meaning", "mafhoom",
+        "matlab", "explain", "sharah", "samjhao", "samjhaiye", "ayat", "aayat", "ayah", "verse",
+        "ayatul kursi", "ayat ul kursi",
         "تفسیر", "تفسير", "تفصیر", "تبصیر", "تقصیر", "ترجمہ", "ترجمة", "آیت", "آیات", "آية",
         "معنی", "معنى", "مطلب", "شرح", "وضاحت", "تشریح", "سمجھاؤ", "آیت الکرسی", "آية الكرسي",
         "तफसीर", "तफ़सीर", "तफ्सीर", "तर्जुमा", "तरजुमा", "आयत", "आयात", "मतलब", "अर्थ", "व्याख्या",
@@ -329,11 +349,12 @@ def detect_language(text: str) -> str:
     urdu_markers = {
         "کے", "کا", "کی", "میں", "ہے", "ہیں", "تھا", "بتاؤ", "بتائیں", "سناؤ", "سنائیں",
         "کیا", "کیسے", "آج", "کل", "کون", "کہاں", "نماز", "موسم", "خبریں", "تفسیر", "پہلی",
-        "ٹائم", "ابھی", "ہوا", "بجے",
-        "kya", "hai", "hain", "he", "batao", "bataiye", "sunao", "sunawo", "kaise", "aaj",
+        "ٹائم", "ٹانم", "ابھی", "ہوا", "بجے",
+        "kya", "hai", "hain", "he", "batao", "bataiye", "sunao", "sunawo", "sunahu", "kaise", "aaj",
         "namaz", "mausam", "khabar", "khabrein", "khabrai", "tafseer", "tafsir", "tarjuma",
-        "pehli", "pehlay", "pehle", "aayat", "ayat", "surah", "kaun", "kahan", "kitna",
-        "band", "chalu", "dikhao", "ruko", "awaaz", "karo", "kero", "mera", "mujhe", "hum", "aap", "ki", "ka", "ke",
+        "pehli", "pehlay", "pehle", "aayat", "ayat", "surah", "sury", "suraj", "kaun", "kahan",
+        "kitna", "band", "chalu", "dikhao", "ruko", "awaaz", "karo", "kero", "mera", "mujhe",
+        "hum", "aap", "ki", "ka", "ke",
     }
     tokens = re.findall(r"[\w\u0600-\u06FF]+", low)
     if any(tok in urdu_markers for tok in tokens):
@@ -412,7 +433,7 @@ def parse_quran_request(text: str) -> Tuple[Optional[int], Optional[int], Option
         return 2, 285, 286, False
 
     surah_num = None
-    m_surah = re.search(r"(?:surah|sura|سوره|سورہ|سورة|सूरह)\s*(?:number|no\.?|نمبر)?\s*(\d{1,3})", low)
+    m_surah = re.search(r"(?:surah|sura|sury|suraj|سوره|سورہ|سورة|सूरह)\s*(?:number|no\.?|نمبر)?\s*(\d{1,3})", low)
     if m_surah:
         surah_num = max(1, min(114, int(m_surah.group(1))))
     else:
@@ -492,7 +513,7 @@ async def fetch_quran_verses(
                 e_idx = max(s_idx + 1, min(total, (end_ay or start_ay)))
             else:
                 s_idx = 0
-                e_idx = min(total, 5)
+                e_idx = min(total, 6)
 
             lines = []
             ur_fallback_parts = []
@@ -598,29 +619,22 @@ async def fetch_weather_info(query: str) -> Tuple[str, Optional[float], Optional
 
 def _rank_groq_model(mid: str) -> int:
     m = mid.lower()
-    if "70b" in m and "versatile" in m:
-        return 1
     if "120b" in m:
+        return 1
+    if "70b" in m and "versatile" in m:
         return 2
-    if "maverick" in m:
-        return 3
-    if "70b" in m:
-        return 4
-    if "kimi" in m or "compound" in m:
-        return 5
     if "qwen" in m:
-        return 6
-    if "scout" in m:
-        return 7
+        return 3
     if "20b" in m or "32b" in m:
-        return 8
+        return 4
+    if "maverick" in m or "scout" in m:
+        return 5
     if "llama" in m:
-        return 9
+        return 6
     return 15
 
 
 async def get_available_groq_models(key: str) -> List[str]:
-    """Auto-discover active chat models on this Groq key (prevents 404 model_not_found)."""
     now_t = time.time()
     cached = MODEL_CACHE.get(key)
     if cached and (now_t - cached[0]) < 600:
@@ -645,37 +659,33 @@ async def get_available_groq_models(key: str) -> List[str]:
                         continue
                     chat_models.append(mid)
                 chat_models.sort(key=_rank_groq_model)
-                print(f"Discovered Groq chat models ({len(chat_models)}): {chat_models[:8]}")
                 if chat_models:
                     MODEL_CACHE[key] = (now_t, chat_models[:8])
                     return chat_models[:8]
-            else:
-                print(f"Groq /models returned {r.status_code}: {r.text[:140]}")
     except Exception as ex:
         print(f"Groq /models error: {ex}")
 
     return FALLBACK_GROQ_MODELS
 
 
-async def call_groq_bilingual(system_prompt: str, user_prompt: str, lang: str, max_tokens: int = 420) -> Optional[Tuple[str, str]]:
+async def call_groq_bilingual(system_prompt: str, user_prompt: str, lang: str, max_tokens: int = 950) -> Optional[Tuple[str, str]]:
     if not RAW_KEYS:
-        print("ERROR: No GROQ_API_KEY configured!")
         return None
 
     if lang == "UR":
         format_rule = (
             "Reply using EXACTLY these two lines and nothing else:\n"
-            "DISPLAY: <Same answer in crystal-clear Roman Urdu using plain English A-Z letters and 0-9 numbers only, NO Urdu script, NO markdown>\n"
-            "VOICE: <Exact same answer in natural, fluent Urdu script (اردو) so a male Urdu voice reads it smoothly>\n"
-            "Both lines must have the exact same meaning and sentence count."
+            "DISPLAY: <Complete, thorough answer in crystal-clear Roman Urdu using plain English A-Z letters and 0-9 numbers only, NO Urdu script, NO markdown>\n"
+            "VOICE: <Complete, thorough answer in natural, fluent Urdu script (اردو) so a male Urdu voice reads every single point completely without cutting off>\n"
+            "Do NOT truncate or summarize prematurely when detailed explanation or Tafseer is asked."
         )
     elif lang == "AR":
         format_rule = (
-            "Reply in clear, accurate Modern Standard Arabic only. No markdown, no asterisks, no Latin letters."
+            "Reply in clear, accurate, complete Modern Standard Arabic only. No markdown, no asterisks, no Latin letters."
         )
     else:
         format_rule = (
-            "Reply in clear, natural English only. No markdown, no bullet symbols, no asterisks."
+            "Reply in clear, natural, complete English only. No markdown, no bullet symbols, no asterisks."
         )
 
     full_sys = system_prompt + "\n\n" + format_rule
@@ -684,7 +694,7 @@ async def call_groq_bilingual(system_prompt: str, user_prompt: str, lang: str, m
         models = await get_available_groq_models(key)
         for model in models:
             try:
-                async with httpx.AsyncClient(timeout=14.0) as client:
+                async with httpx.AsyncClient(timeout=20.0) as client:
                     resp = await client.post(
                         "https://api.groq.com/openai/v1/chat/completions",
                         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
@@ -763,7 +773,7 @@ async def wiki_fallback(query: str) -> Tuple[str, str]:
                 ext = (r.json().get("extract") or "").strip()
                 if ext:
                     sents = re.split(r"(?<=[.!?])\s+", ext)
-                    ans = clean_ascii(" ".join(sents[:2]))[:280]
+                    ans = clean_ascii(" ".join(sents[:3]))[:360]
                     if ans:
                         return ans, ans
     except Exception as ex:
@@ -775,7 +785,7 @@ async def wiki_fallback(query: str) -> Tuple[str, str]:
 async def transcribe_wav(wav_bytes: bytes) -> str:
     if not RAW_KEYS:
         return ""
-    hint_prompt = "Surah, Tafseer, Tarjuma, Namaz, Cricket, News, Educational, Urdu, English, Arabic."
+    hint_prompt = "Surah Ikhlas ki tafseer sunao, Educational philosophy kya hai, Abhi time kya hua, Namaz, Cricket, News."
     for key in RAW_KEYS:
         try:
             async with httpx.AsyncClient(timeout=18.0) as client:
@@ -820,7 +830,7 @@ async def fetch_google_tts_mp3(text: str, lang_code: str) -> bytes:
     mp3_bytes = bytearray()
     headers = {"User-Agent": "Mozilla/5.0"}
     async with httpx.AsyncClient(timeout=12.0, headers=headers) as client:
-        for ch in chunks[:8]:
+        for ch in chunks[:14]:
             url = (
                 f"https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob"
                 f"&tl={tl}&q={urllib.parse.quote(ch)}"
@@ -860,7 +870,6 @@ async def make_tts_with_duration(text: str, voice_code: str) -> Tuple[str, int]:
 
     if len(audio_chunks) < 800:
         tts_source = "google-fallback"
-        print("Edge-TTS empty/blocked -> using Google TTS fallback")
         fb_bytes = await fetch_google_tts_mp3(clean_text, voice_code)
         audio_chunks = bytearray(fb_bytes)
         last_end_ms = 0
@@ -886,7 +895,7 @@ async def make_tts_with_duration(text: str, voice_code: str) -> Tuple[str, int]:
 
 
 def build_synced_pages(display_text: str, total_ms: int, lang: str) -> List[Dict]:
-    max_chars = 36 if lang == "AR" else 70
+    max_chars = 36 if lang == "AR" else 72
     txt = (display_text or "").strip()
     if not txt:
         return [{"t": "...", "ms": max(1500, total_ms)}]
@@ -911,7 +920,7 @@ def build_synced_pages(display_text: str, total_ms: int, lang: str) -> List[Dict
             if cur:
                 chunks.append(cur)
 
-    chunks = chunks[:16]
+    chunks = chunks[:28]
     if not chunks:
         chunks = [txt[:max_chars]]
 
@@ -919,39 +928,42 @@ def build_synced_pages(display_text: str, total_ms: int, lang: str) -> List[Dict
     w_sum = sum(weights)
     pages: List[Dict] = []
     for c, w in zip(chunks, weights):
-        ms = max(1100, int(round(total_ms * (w / w_sum))))
+        ms = max(1300, int(round(total_ms * (w / w_sum))))
         pages.append({"t": c, "ms": ms})
     return pages
 
 
-async def generate_answer(heard: str, lang: str) -> Tuple[str, str, str]:
+async def generate_answer(heard: str, lang: str) -> Tuple[str, str, str, int]:
     now = get_ist_now()
-    hijri = get_hijri_str()
+    hd, hm_en, hm_ur, hy = gregorian_to_hijri(now.year, now.month, now.day)
+    hijri_en = f"{hd} {hm_en} {hy}"
+    hijri_ur = f"{hd} {hm_ur} {hy} ہجری"
     low = heard.lower()
 
     # 1. Namaz timings
     if any(w in low for w in ["namaz", "nimaz", "meeqat", "miqat", "prayer time", "salah time", "نماز", "صلاة", "اوقات", "नमाज", "नमाज़"]):
         disp, tts = build_namaz_response(lang)
-        return "NAMAZ", disp, tts
+        return "NAMAZ", disp, tts, 350
 
-    # 2. Time / Date / Hijri (including Urdu ٹائم / بجے and Hindi टाइम / बजे)
+    # 2. Time / Date / Hijri (Accurate AM/PM + period + Hijri month name)
     time_words = [
         "time", "waqt", "baj", "baje", "date", "tareekh", "tarikh", "hijri",
-        "وقت", "ٹائم", "ٹایم", "بجے", "بجا", "تاریخ", "ہجری",
+        "وقت", "ٹائم", "ٹانم", "بجے", "بجا", "تاریخ", "ہجری",
         "التاريخ", "الساعة", "वक्त", "टाइम", "बजे", "बजा", "तारीख",
     ]
     if any(w in low for w in time_words) and not any(w in low for w in ["namaz", "نماز", "match", "cricket"]):
-        t_str = now.strftime("%I:%M %p").lstrip("0")
-        d_str = now.strftime("%A, %d %B %Y")
+        t_12 = now.strftime("%I:%M %p").lstrip("0")
+        d_en = now.strftime("%A, %d %B %Y")
+        period_ur = format_urdu_period_and_time(now)
         if lang == "AR":
-            ans = f"الوقت الان {t_str}. التاريخ {d_str}. الهجري {hijri}."
-            return "TIME", clean_arabic_display(ans), ans
+            ans = f"الوقت الان {t_12}. التاريخ {d_en}. الهجري {hijri_en}."
+            return "TIME", clean_arabic_display(ans), ans, 300
         if lang == "UR":
-            disp = f"Abhi {t_str} hai. Date {d_str}. Hijri {hijri}."
-            tts = f"ابھی {t_str} بجے ہیں۔ آج تاریخ {d_str} ہے، اور ہجری تاریخ {hijri} ہے۔"
-            return "TIME", disp, tts
-        ans = f"It is {t_str} on {d_str}. Hijri date is {hijri}."
-        return "TIME", ans, ans
+            disp = f"Waqt {t_12}. Date {d_en}. Hijri {hijri_en}."
+            tts = f"ابھی {period_ur}۔ آج تاریخ {d_en} ہے، اور ہجری تاریخ {hijri_ur} ہے۔"
+            return "TIME", disp, tts, 320
+        ans = f"It is {t_12} on {d_en}. Hijri date is {hijri_en}."
+        return "TIME", ans, ans, 300
 
     # 3. Weather
     if any(w in low for w in ["mausam", "mosam", "weather", "temperature", "temp", "barish", "موسم", "الطقس", "मौसम"]):
@@ -959,31 +971,31 @@ async def generate_answer(heard: str, lang: str) -> Tuple[str, str, str]:
         if temp is not None:
             if lang == "AR":
                 ans = f"الطقس في {place} الان {temp} درجة والرياح {wind} كيلومتر."
-                return "WEATHER", clean_arabic_display(ans), ans
+                return "WEATHER", clean_arabic_display(ans), ans, 350
             if lang == "UR":
                 disp = f"{place} mein abhi {temp} degree Celsius aur hawa {wind} kmh hai."
                 tts = f"{place} میں ابھی درجہ حرارت {temp} ڈگری سینٹی گریڈ اور ہوا {wind} کلومیٹر فی گھنٹہ ہے۔"
-                return "WEATHER", disp, tts
+                return "WEATHER", disp, tts, 350
             ans = f"In {place}, it is currently {temp} degrees Celsius with wind at {wind} km/h."
-            return "WEATHER", ans, ans
+            return "WEATHER", ans, ans, 350
 
-    # 4. Quran Translation / Tafseer
+    # 4. Quran Translation / Tafseer (Complete, detailed, ayah-by-ayah)
     if is_tafseer_intent(heard):
         s_num, s_ay, e_ay, is_last = parse_quran_request(heard)
         if s_num:
             s_name, total_ay, verse_block, ur_fb = await fetch_quran_verses(s_num, s_ay, e_ay, is_last)
             if verse_block:
                 sys_p = (
-                    "You are an authentic Islamic scholar giving easy, clear Quran Translation and Tafseer. "
-                    "Explain ONLY the verified ayahs provided below clearly and accurately in warm, simple language. "
-                    "Cover every requested ayah cleanly without skipping."
+                    "You are a learned, thorough Islamic scholar giving complete Quran Translation and Tafseer. "
+                    "Explain EVERY verse in the provided list clearly, accurately, and in full—do NOT cut off or skip any requested ayah. "
+                    "First give the clear translation/meaning of the ayahs, then explain their key tafseer message and practical lesson for life."
                 )
                 usr_p = f"User asked: {heard}\nSurah: {s_name} (Total {total_ay} ayahs)\nVerified Verses:\n{verse_block}"
-                res = await call_groq_bilingual(sys_p, usr_p, lang, max_tokens=620)
+                res = await call_groq_bilingual(sys_p, usr_p, lang, max_tokens=1150)
                 if res:
-                    return f"TAFSEER {s_num}", res[0], res[1]
-                en_fb = clean_ascii(verse_block)[:260]
-                return f"TAFSEER {s_num}", en_fb, (ur_fb if lang == "UR" and ur_fb else en_fb)
+                    return f"TAFSEER {s_num}", res[0], res[1], 1150
+                en_fb = clean_ascii(verse_block)[:360]
+                return f"TAFSEER {s_num}", en_fb, (ur_fb if lang == "UR" and ur_fb else en_fb), 600
 
     # 5. Live Cricket
     if any(w in low for w in ["cricket", "ipl", "t20", "odi", "test match", "score", "virat", "rohit", "babar", "کرکٹ", "اسکور", "میچ", "क्रिकेट"]):
@@ -991,14 +1003,14 @@ async def generate_answer(heard: str, lang: str) -> Tuple[str, str, str]:
         if headlines:
             sys_p = (
                 f"You are a live cricket presenter. Today is {now.strftime('%d %b %Y, %I:%M %p IST')}. "
-                "Report ONLY facts from the live cricket headlines below in 3 crisp sentences."
+                "Report ONLY facts from the live cricket headlines below in 3 to 4 complete sentences."
             )
             usr_p = f"User question: {heard}\nLive Cricket Feeds:\n" + "\n".join(f"- {h}" for h in headlines)
-            res = await call_groq_bilingual(sys_p, usr_p, lang, max_tokens=320)
+            res = await call_groq_bilingual(sys_p, usr_p, lang, max_tokens=500)
             if res:
-                return "CRICKET", res[0], res[1]
-            fb = clean_ascii(". ".join(headlines[:2]))[:220]
-            return "CRICKET", fb, fb
+                return "CRICKET", res[0], res[1], 500
+            fb = clean_ascii(". ".join(headlines[:2]))[:260]
+            return "CRICKET", fb, fb, 350
 
     # 6. Live News
     if any(w in low for w in ["news", "khabar", "khabrein", "khabrai", "headlines", "taza", "latest", "breaking", "خبر", "خبریں", "أخبار", "खबर", "खबरें"]):
@@ -1006,29 +1018,28 @@ async def generate_answer(heard: str, lang: str) -> Tuple[str, str, str]:
         if headlines:
             sys_p = (
                 f"You are an accurate live news anchor. Today is {now.strftime('%d %b %Y, %I:%M %p IST')}. "
-                "Summarize the most relevant live headlines below clearly in 3 sentences without inventing facts."
+                "Summarize the most relevant live headlines below clearly in 3 to 4 complete sentences."
             )
             usr_p = f"User asked: {heard}\nLive Headlines:\n" + "\n".join(f"- {h}" for h in headlines)
-            res = await call_groq_bilingual(sys_p, usr_p, lang, max_tokens=340)
+            res = await call_groq_bilingual(sys_p, usr_p, lang, max_tokens=550)
             if res:
-                return "NEWS", res[0], res[1]
-            fb = clean_ascii(". ".join(headlines[:2]))[:220]
-            return "NEWS", fb, fb
+                return "NEWS", res[0], res[1], 550
+            fb = clean_ascii(". ".join(headlines[:2]))[:260]
+            return "NEWS", fb, fb, 350
 
-    # 7. All General Knowledge + Full Islamic Knowledge
+    # 7. All General Knowledge + Full Islamic Knowledge (Complete answer, never cut off)
     sys_p = (
         f"You are an accurate, all-rounder male voice assistant based in Srinagar, Kashmir. "
-        f"Today is {now.strftime('%A, %d %B %Y, %I:%M %p IST')} (Hijri: {hijri}). "
+        f"Today is {now.strftime('%A, %d %B %Y, %I:%M %p IST')} (Hijri: {hijri_en}). "
         "You answer ALL general knowledge (education, philosophy, science, history, geography, tech, math) AND authentic Islamic knowledge (Quran, Hadith, Seerah, Fiqh, Duas). "
-        "ADAPTIVE LENGTH: Short direct questions get 2 clear sentences; detailed or explanatory questions get 4 to 5 clear sentences. "
-        "Never fabricate facts or references."
+        "ADAPTIVE & COMPLETE LENGTH: Short factual questions get 2 clear sentences; broad/educational/Islamic topics get a thorough, complete answer (5 to 7 sentences) ending cleanly with a full stop—never stop mid-thought."
     )
-    res = await call_groq_bilingual(sys_p, heard, lang, max_tokens=500)
+    res = await call_groq_bilingual(sys_p, heard, lang, max_tokens=950)
     if res:
-        return "ANSWER", res[0], res[1]
+        return "ANSWER", res[0], res[1], 950
 
     disp, tts = await wiki_fallback(heard)
-    return "INFO", disp, tts
+    return "INFO", disp, tts, 450
 
 
 @app.get("/")
@@ -1082,7 +1093,6 @@ async def chat(request: Request):
     STATE["voice"] = voice_code
     low = heard.lower()
 
-    # 1. Stop / Mute
     if any(k in low for k in ["stop", "ruko", "band karo", "chup", "بند کرو", "رکو", "توقف", "रुको"]) and "monster" not in low and "face" not in low:
         return {
             "action": "STOP",
@@ -1108,7 +1118,6 @@ async def chat(request: Request):
             "monster": STATE["monster"],
         }
 
-    # 2. Volume Controls
     m_vol = re.search(r"(?:volume|awaaz|آواز)\s*(?:set|to|par|pe)?\s*(\d{1,2})", low)
     if m_vol:
         STATE["volume"] = max(2, min(18, int(m_vol.group(1))))
@@ -1164,7 +1173,6 @@ async def chat(request: Request):
             "monster": STATE["monster"],
         }
 
-    # 3. Monster Animation Face ON / OFF
     if any(k in low for k in ["monster", "monister", "animation", "chehra", "face", "مونسٹر", "چہرہ"]):
         if any(k in low for k in ["off", "band", "close", "hatao", "hide", "home", "بند", "ہٹاؤ"]):
             STATE["monster"] = False
@@ -1199,9 +1207,8 @@ async def chat(request: Request):
                 "monster": True,
             }
 
-    # 4. Quran Audio Stream (ONLY when NOT asking for Tafseer/Translation/Ayah meaning)
     is_quran_play = any(w in low for w in [
-        "surah", "sura", "quran", "tilawat", "recite", "recitation",
+        "surah", "sura", "sury", "suraj", "quran", "tilawat", "recite", "recitation",
         "سورہ", "سورة", "قرآن", "تلاوت", "सूरह", "कुरान"
     ])
     if is_quran_play and not is_tafseer_intent(heard):
@@ -1219,8 +1226,7 @@ async def chat(request: Request):
             "monster": STATE["monster"],
         }
 
-    # 5. Tafseer / GK / Islamic / Cricket / News / Weather / Namaz / Time
-    header, disp, tts = await generate_answer(heard, lang)
+    header, disp, tts, _ = await generate_answer(heard, lang)
     audio_url, total_ms = await make_tts_with_duration(tts, voice_code)
     pages = build_synced_pages(disp, total_ms, lang)
 
