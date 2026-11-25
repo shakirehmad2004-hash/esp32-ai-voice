@@ -314,6 +314,14 @@ def clean_arabic_display(text: str) -> str:
     return s
 
 
+def clean_voice_script(text: str) -> str:
+    s = re.sub(r"<think>.*?</think>", "", text or "", flags=re.S)
+    s = re.sub(r"\b(?:DISPLAY|VOICE)\s*:\s*", "", s, flags=re.I)
+    s = re.sub(r"[*_#`~]+", "", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
 def is_tafseer_intent(text: str) -> bool:
     low = (text or "").lower()
     keywords = [
@@ -674,7 +682,7 @@ async def get_available_groq_models(key: str) -> List[str]:
     return FALLBACK_GROQ_MODELS
 
 
-async def call_groq_bilingual(system_prompt: str, user_prompt: str, lang: str, max_tokens: int = 950) -> Optional[Tuple[str, str]]:
+async def call_groq_bilingual(system_prompt: str, user_prompt: str, lang: str, max_tokens: int = 1100) -> Optional[Tuple[str, str]]:
     if not RAW_KEYS:
         return None
 
@@ -683,7 +691,7 @@ async def call_groq_bilingual(system_prompt: str, user_prompt: str, lang: str, m
             "STRICT LANGUAGE LOCK: The user asked in URDU/ROMAN URDU.\n"
             "Reply using EXACTLY these two lines and nothing else:\n"
             "DISPLAY: <Clean answer in Roman Urdu using A-Z letters and 0-9 numbers only; NO Urdu script, NO English sentences, NO words like DISPLAY or VOICE>\n"
-            "VOICE: <Exact same clean answer in natural, fluent Urdu script (اردو) for a male Urdu voice>\n"
+            "VOICE: <Exact same clean answer in natural, fluent Urdu script (اردو) for a male Urdu voice; never say the words DISPLAY or VOICE>\n"
             "Never output English-only answers when lang is UR."
         )
     elif lang == "AR":
@@ -703,7 +711,7 @@ async def call_groq_bilingual(system_prompt: str, user_prompt: str, lang: str, m
         models = await get_available_groq_models(key)
         for model in models:
             try:
-                async with httpx.AsyncClient(timeout=20.0) as client:
+                async with httpx.AsyncClient(timeout=22.0) as client:
                     resp = await client.post(
                         "https://api.groq.com/openai/v1/chat/completions",
                         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
@@ -727,13 +735,14 @@ async def call_groq_bilingual(system_prompt: str, user_prompt: str, lang: str, m
                             m_voice = re.search(r"VOICE:\s*(.+)", raw, flags=re.S | re.I)
                             if m_disp and m_voice:
                                 disp = clean_ascii(m_disp.group(1))
-                                voice = re.sub(r"[*_#`~]+", "", m_voice.group(1)).strip()
+                                voice = clean_voice_script(m_voice.group(1))
                                 if disp and voice:
                                     return disp, voice
-                            disp_fb = clean_ascii(raw)
-                            if disp_fb:
-                                return disp_fb, raw
-                            return "Jawab tayyar hai.", raw
+                            voice_only = clean_voice_script(raw)
+                            disp_fb = clean_ascii(voice_only)
+                            if disp_fb and voice_only:
+                                return disp_fb, voice_only
+                            return "Jawab tayyar hai.", voice_only or "جواب تیار ہے۔"
 
                         if lang == "AR":
                             ar_clean = clean_arabic_display(raw)
@@ -839,7 +848,7 @@ async def fetch_google_tts_mp3(text: str, lang_code: str) -> bytes:
     mp3_bytes = bytearray()
     headers = {"User-Agent": "Mozilla/5.0"}
     async with httpx.AsyncClient(timeout=12.0, headers=headers) as client:
-        for ch in chunks[:14]:
+        for ch in chunks[:18]:
             url = (
                 f"https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob"
                 f"&tl={tl}&q={urllib.parse.quote(ch)}"
@@ -858,7 +867,7 @@ async def make_tts_with_duration(text: str, voice_code: str) -> Tuple[str, int]:
     out_path = os.path.join(AUDIO_DIR, f"{fid}.mp3")
     voice = VOICE_MAP.get(voice_code, "ur-PK-AsadNeural")
     rate = SPEED_MAP.get(STATE["speed"], "+0%")
-    clean_text = re.sub(r"[*_#`~]+", "", text or "").strip() or "جی بتائیے۔"
+    clean_text = clean_voice_script(text) or "جی بتائیے۔"
 
     audio_chunks = bytearray()
     last_end_ms = 0
@@ -886,9 +895,10 @@ async def make_tts_with_duration(text: str, voice_code: str) -> Tuple[str, int]:
     with open(out_path, "wb") as f:
         f.write(audio_chunks)
 
-    bps = 6000.0 if tts_source == "edge" else 4000.0
-    est_ms = int((len(audio_chunks) / bps) * 1000) if audio_chunks else 2500
-    total_ms = max(last_end_ms, est_ms, 1500)
+    bps = 5200.0 if tts_source == "edge" else 3800.0
+    est_ms = int((len(audio_chunks) / bps) * 1000) if audio_chunks else 3000
+    char_ms = max(2500, len(clean_text) * 95)
+    total_ms = max(last_end_ms, est_ms, char_ms)
     print(f"TTS [{tts_source}] bytes={len(audio_chunks)} ms={total_ms}")
 
     now_t = time.time()
@@ -907,7 +917,7 @@ def build_synced_pages(display_text: str, total_ms: int, lang: str) -> List[Dict
     max_chars = 36 if lang == "AR" else 72
     txt = (display_text or "").strip()
     if not txt:
-        return [{"t": "...", "ms": max(1500, total_ms)}]
+        return [{"t": "...", "ms": max(2400, total_ms)}]
 
     raw_sents = [s.strip() for s in re.split(r"(?<=[.!?؟۔])\s+", txt) if s.strip()]
     chunks: List[str] = []
@@ -933,11 +943,11 @@ def build_synced_pages(display_text: str, total_ms: int, lang: str) -> List[Dict
     if not chunks:
         chunks = [txt[:max_chars]]
 
-    weights = [max(6, len(c)) for c in chunks]
+    weights = [max(8, len(c)) for c in chunks]
     w_sum = sum(weights)
     pages: List[Dict] = []
     for c, w in zip(chunks, weights):
-        ms = max(1300, int(round(total_ms * (w / w_sum))))
+        ms = max(2200, int(round(total_ms * (w / w_sum))))
         pages.append({"t": c, "ms": ms})
     return pages
 
@@ -990,25 +1000,29 @@ async def generate_answer(heard: str, lang: str) -> Tuple[str, str, str]:
 
     # 4. Quran Tarjuma + Motabar Tafseer + Surah Detail (Nazool & Waqt Ke Halaat)
     s_num, s_ay, e_ay, is_last = parse_quran_request(heard)
-    detail_words = ["detail", "details", "tafseel", "tafsil", "mukammal", "poora", "pura", "kahan", "kab", "waqt", "halaat", "halat", "nazool", "nuzool", "shaan", "مکمل", "تفصیل", "حالات", "نزول"]
+    detail_words = [
+        "detail", "details", "tafseel", "tafsil", "mukammal", "poora", "pura",
+        "kahan", "kab", "waqt", "halaat", "halat", "nazool", "nuzool", "shaan",
+        "مکمل", "تفصیل", "حالات", "نزول",
+    ]
     if is_tafseer_intent(heard) or (s_num is not None and any(w in low for w in detail_words)):
         if s_num:
             s_name_en, s_name_ar, total_ay, verse_block, ur_fb = await fetch_quran_verses(s_num, s_ay, e_ay, is_last)
             if verse_block:
                 sys_p = (
-                    "You are a careful, authentic Sunni Islamic scholar (aligned with Tafseer-e-Usmani, Ma'ariful Quran, and Tafseer al-Jalalayn). "
-                    "Never invent personal opinions, psychology/nafsaniat metaphors, or unverified claims. Stick strictly to authentic Quranic meaning and classical shaan-e-nuzool.\n"
-                    "Present the answer in this clear order:\n"
-                    "1) Surah Name, Surah Number, total ayahs, and Makki or Madani status.\n"
+                    "You are a careful, authentic Sunni Islamic scholar following classical Tafseer (Tafseer-e-Usmani, Ma'ariful Quran, and Tafseer al-Jalalayn). "
+                    "Never use psychology/nafsaniat jargon, personal guesses, or broken words. State facts clearly and completely.\n"
+                    "Give the response in this exact order:\n"
+                    "1) Surah Name, Surah Number, exact total ayahs, and whether it is Makki or Madani.\n"
                     "2) Place of nazool and historical circumstances at that time (waqt ke halaat / shaan-e-nuzool).\n"
-                    "3) Clear tarjuma (translation) of the ayahs, followed by concise, authentic tafseer."
+                    "3) Clear tarjuma (translation) of every verse in the list, followed by concise, authentic tafseer."
                 )
                 usr_p = (
                     f"User question: {heard}\n"
                     f"Surah Number: {s_num} | English Name: {s_name_en} | Arabic Name: {s_name_ar} | Total Ayahs: {total_ay}\n"
                     f"Verified Ayahs:\n{verse_block}"
                 )
-                res = await call_groq_bilingual(sys_p, usr_p, lang, max_tokens=1200)
+                res = await call_groq_bilingual(sys_p, usr_p, lang, max_tokens=1400)
                 if res:
                     return f"SURAH {s_num}", res[0], res[1]
                 en_fb = clean_ascii(verse_block)[:360]
@@ -1023,7 +1037,7 @@ async def generate_answer(heard: str, lang: str) -> Tuple[str, str, str]:
                 "Report ONLY facts from the live cricket headlines below in 3 to 4 complete sentences."
             )
             usr_p = f"User question: {heard}\nLive Cricket Feeds:\n" + "\n".join(f"- {h}" for h in headlines)
-            res = await call_groq_bilingual(sys_p, usr_p, lang, max_tokens=500)
+            res = await call_groq_bilingual(sys_p, usr_p, lang, max_tokens=550)
             if res:
                 return "CRICKET", res[0], res[1]
             fb = clean_ascii(". ".join(headlines[:2]))[:260]
@@ -1038,7 +1052,7 @@ async def generate_answer(heard: str, lang: str) -> Tuple[str, str, str]:
                 "Summarize the most relevant live headlines below clearly in 3 to 4 complete sentences."
             )
             usr_p = f"User asked: {heard}\nLive Headlines:\n" + "\n".join(f"- {h}" for h in headlines)
-            res = await call_groq_bilingual(sys_p, usr_p, lang, max_tokens=550)
+            res = await call_groq_bilingual(sys_p, usr_p, lang, max_tokens=600)
             if res:
                 return "NEWS", res[0], res[1]
             fb = clean_ascii(". ".join(headlines[:2]))[:260]
@@ -1051,7 +1065,7 @@ async def generate_answer(heard: str, lang: str) -> Tuple[str, str, str]:
         "You answer ALL general knowledge (education, philosophy, science, history, geography, tech, math) AND authentic Islamic knowledge (Quran, Hadith, Seerah, Fiqh, Duas). "
         "ADAPTIVE & COMPLETE LENGTH: Short factual questions get 2 clear sentences; broad/educational/Islamic topics get a thorough, complete answer ending cleanly with a full stop."
     )
-    res = await call_groq_bilingual(sys_p, heard, lang, max_tokens=950)
+    res = await call_groq_bilingual(sys_p, heard, lang, max_tokens=1100)
     if res:
         return "ANSWER", res[0], res[1]
 
@@ -1224,6 +1238,11 @@ async def chat(request: Request):
                 "monster": True,
             }
 
+    detail_words = [
+        "detail", "details", "tafseel", "tafsil", "mukammal", "poora", "pura",
+        "kahan", "kab", "waqt", "halaat", "halat", "nazool", "nuzool", "shaan",
+        "مکمل", "تفصیل", "حالات", "نزول",
+    ]
     s_num, _, _, _ = parse_quran_request(heard)
     is_quran_play = any(w in low for w in [
         "surah", "sura", "sury", "suraj", "quran", "tilawat", "recite", "recitation",
