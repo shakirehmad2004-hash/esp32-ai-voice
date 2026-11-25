@@ -38,7 +38,7 @@ FALLBACK_GROQ_MODELS = [
 ]
 
 MODEL_CACHE: Dict[str, Tuple[float, List[str]]] = {}
-CHAT_HISTORY: deque = deque(maxlen=8)
+CHAT_HISTORY: deque = deque(maxlen=10)
 
 STATE = {
     "voice": "UR-M",
@@ -60,9 +60,9 @@ GTTS_LANG_MAP = {
 }
 
 SPEED_MAP = {
-    "Slow": "-22%",
+    "Slow": "-25%",
     "Norm": "+0%",
-    "Fast": "+10%",
+    "Fast": "+8%",
 }
 
 MEEQAT_ANCHORS = [
@@ -267,7 +267,7 @@ SURAH_CLASSICAL_NOTES: Dict[int, Dict[str, str]] = {
         "halaat_ur": "سورۃ البقرہ مدینہ منورہ میں نازل ہوئی۔ مدنی دور میں جب اسلامی معاشرہ منظم ہو رہا تھا تو معاشرتی، مالی اور شرعی احکام نازل کیے گئے۔",
         "halaat_en": "Surah Al-Baqarah is a Madani Surah revealed in Madinah after Hijrah, addressing faith, social conduct, and legal rulings.",
         "halaat_ar": "سورة البقرة مدنية، نزلت في المدينة المنورة لتبيان الأحكام الشرعية والهداية.",
-        "tafseer_ur": "معتبر تفاسیر کے مطابق آیت 180 تا 182 میں وصیت کے احکام اور ان کی حکمت بیان ہوئی ہے، اور آیت 183 تا 185 میں رمضان کے روزوں کا فرض ہونا، عذر والوں کی رعایت اور ماہِ رمضان میں قرآن کے نزول کی برکت بیان کی گئی ہے۔",
+        "tafseer_ur": "معتبر تفاسیر کے مطابق آیت 180 تا 182 میں وصیت کے احکام، آیت 183 تا 185 میں رمضان کے روزوں اور قرآن کے نزول کا ذکر، اور اس سے آگے کی آیات میں احکام و ہدایات بیان ہوئے ہیں۔",
     },
     112: {
         "revelation": "Makki",
@@ -347,8 +347,9 @@ def format_urdu_period_and_time(now: datetime.datetime) -> str:
 def clean_ascii(text: str) -> str:
     s = re.sub(r"<think>.*?</think>", "", text or "", flags=re.S)
     s = re.sub(r"\b(?:DISPLAY|VOICE)\s*:\s*", "", s, flags=re.I)
+    s = s.replace("\u2019", "'").replace("\u2018", "'")
     s = re.sub(r"[^\x20-\x7E]", " ", s)
-    s = re.sub(r"[*_#`~\"']+", "", s)
+    s = re.sub(r"[*_#`~\"]+", "", s)
     s = re.sub(r"\s+", " ", s).strip()
     return s
 
@@ -373,9 +374,18 @@ def format_history_for_prompt() -> str:
     if not CHAT_HISTORY:
         return ""
     lines = []
-    for item in list(CHAT_HISTORY)[-4:]:
-        lines.append(f"User: {item['u']}\nAssistant: {item['a']}")
-    return "Recent Conversation Context:\n" + "\n".join(lines) + "\n\n"
+    for item in list(CHAT_HISTORY)[-5:]:
+        lines.append(f"Previous User Question: {item['u']}\nPrevious Answer: {item['a']}")
+    return "Previous Conversation Memory (use this to resolve follow-ups like 'its types', 'more details', 'is ke baare mein'):\n" + "\n".join(lines) + "\n\n"
+
+
+def is_follow_up_ayah_request(text: str) -> bool:
+    low = (text or "").lower()
+    return any(p in low for p in [
+        "is se aagay", "is se age", "is se agay", "is ke aagay", "is ke age",
+        "agli aayat", "agla aayat", "agli ayat", "next ayah", "next ayat", "next verse",
+        "اس سے آگے", "اگلی آیت", "اگلی آیات",
+    ])
 
 
 def is_tafseer_intent(text: str) -> bool:
@@ -415,12 +425,13 @@ def detect_language(text: str) -> str:
     urdu_markers = {
         "کے", "کا", "کی", "میں", "ہے", "ہیں", "تھا", "بتاؤ", "بتائیں", "سناؤ", "سنائیں",
         "کیا", "کیسے", "آج", "کل", "کون", "کہاں", "نماز", "موسم", "خبریں", "تفسیر", "پہلی",
-        "ٹائم", "ٹانم", "ابھی", "ہوا", "بجے", "حالات", "نزول", "سے", "پچھلا", "اگلا",
+        "ٹائم", "ٹانم", "ابھی", "ہوا", "بجے", "حالات", "نزول", "سے", "پچھلا", "اگلا", "آگے",
         "kya", "hai", "hain", "he", "batao", "bataiye", "sunao", "sunawo", "sunahu", "kaise", "aaj",
         "namaz", "mausam", "khabar", "khabrein", "khabrai", "tafseer", "tafsir", "tarjuma",
         "pehli", "pehlay", "pehle", "aayat", "ayat", "surah", "sury", "suraj", "kaun", "kahan",
         "kitna", "band", "chalu", "dikhao", "ruko", "awaaz", "karo", "kero", "mera", "mujhe",
-        "hum", "aap", "ki", "ka", "ke", "se", "say", "halaat", "nazool", "nuzool", "pichla", "agli",
+        "hum", "aap", "ki", "ka", "ke", "se", "say", "aagay", "age", "agay", "agli", "halaat",
+        "nazool", "nuzool",
     }
     tokens = re.findall(r"[\w\u0600-\u06FF]+", low)
     if any(tok in urdu_markers for tok in tokens):
@@ -490,6 +501,13 @@ def replace_number_words(text: str) -> str:
     return out
 
 
+def get_last_quran_context() -> Tuple[Optional[int], Optional[int]]:
+    for item in reversed(list(CHAT_HISTORY)):
+        if item.get("surah_num") is not None:
+            return item.get("surah_num"), item.get("last_ayah")
+    return None, None
+
+
 def parse_quran_request(text: str) -> Tuple[Optional[int], Optional[int], Optional[int], bool]:
     low = text.lower()
 
@@ -508,14 +526,17 @@ def parse_quran_request(text: str) -> Tuple[Optional[int], Optional[int], Option
                 surah_num = SURAH_NAMES[name]
                 break
 
-    if surah_num is None and CHAT_HISTORY:
-        for item in reversed(list(CHAT_HISTORY)):
-            prev_s = item.get("surah_num")
-            if prev_s:
-                surah_num = prev_s
-                break
+    last_s, last_ay = get_last_quran_context()
+    if surah_num is None and (is_follow_up_ayah_request(low) or is_tafseer_intent(low)):
+        if last_s is not None:
+            surah_num = last_s
 
     norm = replace_number_words(low)
+
+    # Follow-up next ayah after previous ayah/range (e.g., "is se aagay aayat ka tarjuma batao" after 180..185 -> 186..188)
+    if is_follow_up_ayah_request(low) and surah_num is not None:
+        base_ay = (last_ay or 1) + 1
+        return surah_num, base_ay, base_ay + 2, False
 
     m_range = re.search(
         r"(?:ayat|aayat|ayah|verse|آیت|آیات|آية|आयत)?\s*(\d{1,3})\s*(?:se|say|to|-|تا|إلى|से)\s*(\d{1,3})",
@@ -557,16 +578,16 @@ def parse_quran_request(text: str) -> Tuple[Optional[int], Optional[int], Option
 
 async def fetch_quran_verses(
     surah_num: int, start_ay: Optional[int], end_ay: Optional[int], is_last: bool
-) -> Tuple[str, str, int, List[Tuple[int, str, str, str]]]:
+) -> Tuple[str, str, int, List[Tuple[int, str, str, str]], Optional[int]]:
     url = f"https://api.alquran.cloud/v1/surah/{surah_num}/editions/quran-uthmani,ur.jalandhry,en.sahih"
     try:
         async with httpx.AsyncClient(timeout=12.0) as client:
             r = await client.get(url)
             if r.status_code != 200:
-                return "", "", 0, []
+                return "", "", 0, [], None
             editions = r.json().get("data", [])
             if len(editions) < 3:
-                return "", "", 0, []
+                return "", "", 0, [], None
             ar_ed, ur_ed, en_ed = editions[0], editions[1], editions[2]
             s_name_en = ar_ed.get("englishName") or f"Surah {surah_num}"
             s_name_ar = ar_ed.get("name") or s_name_en
@@ -594,28 +615,31 @@ async def fetch_quran_verses(
                 en_t = (en_list[idx].get("text", "") if idx < len(en_list) else "").strip()
                 out_ayahs.append((anum, ar_t, ur_t, en_t))
 
-            return s_name_en, s_name_ar, total, out_ayahs
+            actual_last_ayah = out_ayahs[-1][0] if out_ayahs else None
+            return s_name_en, s_name_ar, total, out_ayahs, actual_last_ayah
     except Exception as ex:
         print(f"Quran API error: {ex}")
-        return "", "", 0, []
+        return "", "", 0, [], None
 
 
 async def build_accurate_surah_audio(
     surah_num: int, start_ay: Optional[int], end_ay: Optional[int], is_last: bool, lang: str
-) -> Tuple[str, str, str]:
-    s_name_en, s_name_ar, total_ay, ayahs = await fetch_quran_verses(surah_num, start_ay, end_ay, is_last)
+) -> Tuple[str, str, str, Optional[int]]:
+    s_name_en, s_name_ar, total_ay, ayahs, actual_last_ayah = await fetch_quran_verses(
+        surah_num, start_ay, end_ay, is_last
+    )
     if not ayahs:
         if lang == "AR":
             txt = f"تعذر تحميل بيانات السورة رقم {surah_num}."
             url, _ = await make_tts_with_duration(txt, "AR-M")
-            return f"SURAH {surah_num}", url, txt
+            return f"SURAH {surah_num}", url, txt, None
         if lang == "EN":
             txt = f"Could not load Surah {surah_num} details right now."
             url, _ = await make_tts_with_duration(txt, "EN-M")
-            return f"SURAH {surah_num}", url, txt
+            return f"SURAH {surah_num}", url, txt, None
         txt = f"سورہ نمبر {surah_num} کی معلومات ابھی لوڈ نہیں ہو سکیں۔"
         url, _ = await make_tts_with_duration(txt, "UR-M")
-        return f"SURAH {surah_num}", url, txt
+        return f"SURAH {surah_num}", url, txt, None
 
     note = SURAH_CLASSICAL_NOTES.get(surah_num, {})
     rev_type = note.get("revelation", "Quran")
@@ -630,7 +654,7 @@ async def build_accurate_surah_audio(
             parts.append(f"الآية {anum}: {ar_t}.")
         script = " ".join(parts)
         url, _ = await make_tts_with_duration(script, "AR-M")
-        return f"TAFSEER {surah_num}", url, script
+        return f"TAFSEER {surah_num}", url, script, actual_last_ayah
 
     if lang == "EN":
         halaat = note.get(
@@ -642,7 +666,7 @@ async def build_accurate_surah_audio(
             parts.append(f"Verse {anum} translation: {en_t}")
         script = " ".join(parts)
         url, _ = await make_tts_with_duration(script, "EN-M")
-        return f"TAFSEER {surah_num}", url, script
+        return f"TAFSEER {surah_num}", url, script, actual_last_ayah
 
     halaat_ur = note.get(
         "halaat_ur",
@@ -650,13 +674,12 @@ async def build_accurate_surah_audio(
     )
     tafseer_ur = note.get("tafseer_ur", "")
 
-    if start_ay is not None:
-        if end_ay and end_ay > start_ay:
-            intro = f"سورہ نمبر {surah_num}، آیت {start_ay} سے {end_ay} تک۔ {halaat_ur} ترجمہ سماعت فرمائیں۔"
-        else:
-            intro = f"سورہ نمبر {surah_num}، آیت {start_ay}۔ {halaat_ur} ترجمہ سماعت فرمائیں۔"
+    first_a = ayahs[0][0]
+    last_a = ayahs[-1][0]
+    if last_a > first_a:
+        intro = f"سورہ نمبر {surah_num}، آیت {first_a} سے {last_a} تک۔ {halaat_ur} ترجمہ سماعت فرمائیں۔"
     else:
-        intro = f"سورہ نمبر {surah_num}، کل آیات {total_ay}۔ {halaat_ur} ترجمہ سماعت فرمائیں۔"
+        intro = f"سورہ نمبر {surah_num}، آیت {first_a}۔ {halaat_ur} ترجمہ سماعت فرمائیں۔"
 
     parts = [intro]
     for anum, _, ur_t, _ in ayahs:
@@ -667,7 +690,7 @@ async def build_accurate_surah_audio(
 
     script = " ".join(parts)
     url, _ = await make_tts_with_duration(script, "UR-M")
-    return f"TAFSEER {surah_num}", url, script
+    return f"TAFSEER {surah_num}", url, script, actual_last_ayah
 
 
 async def fetch_rss_items(urls: List[str], limit: int = 5) -> List[str]:
@@ -818,21 +841,21 @@ async def call_groq_bilingual(system_prompt: str, user_prompt: str, lang: str, m
         format_rule = (
             "STRICT LANGUAGE LOCK: The user asked in URDU/ROMAN URDU.\n"
             "Reply using EXACTLY these two lines and nothing else:\n"
-            "DISPLAY: <Clean answer in Roman Urdu using A-Z letters and 0-9 numbers only; NO Urdu script, NO English sentences, NO words like DISPLAY or VOICE>\n"
-            "VOICE: <Exact same clean answer in natural, fluent Urdu script (اردو) for a male Urdu voice; never say the words DISPLAY or VOICE>\n"
-            "Keep previous conversation context in mind when answering follow-ups."
+            "DISPLAY: <Clean, accurate answer in Roman Urdu using A-Z letters and 0-9 numbers only; NO Urdu script, NO English sentences, NO words like DISPLAY or VOICE>\n"
+            "VOICE: <Exact same clean, accurate answer in natural, fluent Urdu script (اردو) for a male Urdu voice; never say the words DISPLAY or VOICE>\n"
+            "Always directly answer the user's question and resolve follow-ups using Previous Conversation Memory."
         )
     elif lang == "AR":
         format_rule = (
             "STRICT LANGUAGE LOCK: The user asked in ARABIC.\n"
             "Reply ONLY in clear, accurate Modern Standard Arabic. No Urdu, no English words, no markdown.\n"
-            "Keep previous conversation context in mind when answering follow-ups."
+            "Resolve follow-ups using Previous Conversation Memory."
         )
     else:
         format_rule = (
             "STRICT LANGUAGE LOCK: The user asked in ENGLISH.\n"
-            "Use simple, clear, everyday English with easy pronunciation (avoid overly complex rare words). No markdown.\n"
-            "Keep previous conversation context in mind when answering follow-ups."
+            "Use simple, clear, everyday English with easy pronunciation (avoid overly complex or rare words). No markdown.\n"
+            "Always directly answer the user's question and resolve follow-ups using Previous Conversation Memory."
         )
 
     full_sys = system_prompt + "\n\n" + history_ctx + format_rule
@@ -933,7 +956,7 @@ async def wiki_fallback(query: str) -> Tuple[str, str]:
 async def transcribe_wav(wav_bytes: bytes) -> str:
     if not RAW_KEYS:
         return ""
-    hint_prompt = "Surah Baqarah aayat 180 se 185 ki tafseer sunao, Surah Ikhlas ki tafseer sunao, Abhi time kya hua, Namaz, Cricket, News."
+    hint_prompt = "Surah Baqarah aayat 180 se 185 ki tafseer sunao, Is se aagay aayat ka tarjuma batao, What are its types, Abhi time kya hua, Namaz, Cricket, News."
     for key in RAW_KEYS:
         try:
             async with httpx.AsyncClient(timeout=18.0) as client:
@@ -996,8 +1019,9 @@ async def make_tts_with_duration(text: str, voice_code: str) -> Tuple[str, int]:
     fid = uuid.uuid4().hex[:10]
     out_path = os.path.join(AUDIO_DIR, f"{fid}.mp3")
     voice = VOICE_MAP.get(voice_code, "ur-PK-AsadNeural")
+    # Slightly slower, clear pacing for English in default Norm mode
     if voice_code == "EN-M" and STATE["speed"] == "Norm":
-        rate = "-18%"
+        rate = "-22%"
     else:
         rate = SPEED_MAP.get(STATE["speed"], "+0%")
     clean_text = clean_voice_script(text) or "جی بتائیے۔"
@@ -1028,13 +1052,9 @@ async def make_tts_with_duration(text: str, voice_code: str) -> Tuple[str, int]:
     with open(out_path, "wb") as f:
         f.write(audio_chunks)
 
-    # Actual MP3 bitrate for Edge TTS is ~48kbps (~6000 bytes/sec); use realistic duration so OLED pages stay in sync
-    bps = 6000.0 if tts_source == "edge" else 4200.0
+    bps = 5600.0 if tts_source == "edge" else 4200.0
     est_ms = int((len(audio_chunks) / bps) * 1000) if audio_chunks else 2000
-    if last_end_ms > 0:
-        total_ms = last_end_ms
-    else:
-        total_ms = max(1400, est_ms)
+    total_ms = last_end_ms if last_end_ms > 0 else max(1400, est_ms)
     print(f"TTS [{tts_source}] rate={rate} bytes={len(audio_chunks)} ms={total_ms}")
 
     now_t = time.time()
@@ -1083,7 +1103,7 @@ def build_synced_pages(display_text: str, total_ms: int, lang: str) -> List[Dict
     w_sum = sum(weights)
     pages: List[Dict] = []
     for c, w in zip(chunks, weights):
-        ms = max(900, int(round(total_ms * (w / w_sum))))
+        ms = max(850, int(round(total_ms * (w / w_sum))))
         pages.append({"t": c, "ms": ms})
     return pages
 
@@ -1160,10 +1180,11 @@ async def generate_answer(heard: str, lang: str) -> Tuple[str, str, str]:
             return "NEWS", fb, fb
 
     sys_p = (
-        f"You are an accurate, all-rounder male voice assistant based in Srinagar, Kashmir. "
+        f"You are an accurate, factual male voice assistant based in Srinagar, Kashmir. "
         f"Today is {now.strftime('%A, %d %B %Y, %I:%M %p IST')} (Hijri: {hijri_en}). "
-        "You answer ALL general knowledge (education, philosophy, science, history, geography, tech, math) AND authentic Islamic knowledge (Quran, Hadith, Seerah, Fiqh, Duas). "
-        "ADAPTIVE & COMPLETE LENGTH: Short factual questions get 2 clear sentences; broad/educational/Islamic topics get a thorough, complete answer ending cleanly with a full stop."
+        "Give direct, accurate, well-structured answers across education, philosophy, science, history, geography, technology, and Islamic topics. "
+        "When the user asks a follow-up like 'What are its types?' or 'Explain more', use the Previous Conversation Memory to answer about the exact subject discussed in the previous turn. "
+        "Keep answers clear, accurate, and complete without cutting off."
     )
     res = await call_groq_bilingual(sys_p, heard, lang, max_tokens=1100)
     if res:
@@ -1349,9 +1370,16 @@ async def chat(request: Request):
         "سورہ", "سورة", "قرآن", "تلاوت", "सूरह", "कुरान"
     ])
 
-    if s_num is not None and (is_tafseer_intent(heard) or any(w in low for w in detail_words)):
-        hdr_title, audio_rel, summary_txt = await build_accurate_surah_audio(s_num, s_ay, e_ay, is_last, lang)
-        CHAT_HISTORY.append({"u": heard, "a": summary_txt[:220], "surah_num": s_num})
+    if s_num is not None and (is_tafseer_intent(heard) or is_follow_up_ayah_request(heard) or any(w in low for w in detail_words)):
+        hdr_title, audio_rel, summary_txt, actual_last_ay = await build_accurate_surah_audio(
+            s_num, s_ay, e_ay, is_last, lang
+        )
+        CHAT_HISTORY.append({
+            "u": heard,
+            "a": summary_txt[:260],
+            "surah_num": s_num,
+            "last_ayah": actual_last_ay,
+        })
         full_audio_url = f"https://esp32-ai-voice.onrender.com{audio_rel}"
         return {
             "action": "STREAM",
@@ -1366,7 +1394,7 @@ async def chat(request: Request):
 
     if is_quran_play:
         num = s_num or 1
-        CHAT_HISTORY.append({"u": heard, "a": f"Played Surah {num}", "surah_num": num})
+        CHAT_HISTORY.append({"u": heard, "a": f"Played Surah {num}", "surah_num": num, "last_ayah": None})
         stream_url = f"https://server8.mp3quran.net/afs/{num:03d}.mp3"
         return {
             "action": "STREAM",
@@ -1380,7 +1408,7 @@ async def chat(request: Request):
         }
 
     header, disp, tts = await generate_answer(heard, lang)
-    CHAT_HISTORY.append({"u": heard, "a": disp[:220], "surah_num": s_num})
+    CHAT_HISTORY.append({"u": heard, "a": disp[:260], "surah_num": s_num, "last_ayah": None})
     audio_url, total_ms = await make_tts_with_duration(tts, voice_code)
     pages = build_synced_pages(disp, total_ms, lang)
 
