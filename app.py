@@ -252,6 +252,45 @@ WHISPER_HALLUCINATIONS = {
     "subscribe", "you", "you.", "mbc", "bye", "bye.", ".", "...", "okay", "ok",
 }
 
+# Verified classical Sunni Tafseer & Nazool notes for key Surahs (clean, accurate, non-speculative)
+SURAH_CLASSICAL_NOTES: Dict[int, Dict[str, str]] = {
+    1: {
+        "revelation": "Makki",
+        "halaat_ur": "سورۃ الفاتحہ مکہ مکرمہ میں نازل ہوئی۔ یہ قرآنِ مجید کا افتتاحی باب ہے اور ہر نماز کی ہر رکعت میں پڑھی جاتی ہے۔ اس میں اللہ تعالیٰ کی حمد، رحمت، روزِ جزا کے اقرار اور صراطِ مستقیم کی دعا سکھائی گئی ہے۔",
+        "halaat_en": "Surah Al-Fatihah is a Makki Surah revealed in Makkah. It opens the Quran and is recited in every unit of Salah, teaching praise of Allah, His mercy, accountability, and asking for the straight path.",
+        "halaat_ar": "سورة الفاتحة مكية، وهي فاتحة الكتاب وتُقرأ في كل ركعة من الصلاة، وتشتمل على الحمد والثناء على الله وطلب الهداية إلى الصراط المستقيم.",
+        "tafseer_ur": "تفسیر کے مطابق اس سورت میں بندے کو دعا اور آدابِ بندگی سکھائے گئے ہیں: پہلے اللہ کی حمد و ثناء، پھر اس کی رحمانیت و رحیمیت کا ذکر، پھر یومِ دین کا اقرار، اور اس کے بعد صراطِ مستقیم یعنی انبیاء، صدیقین، شہداء اور صالحین کے راستے کی التجا۔",
+    },
+    112: {
+        "revelation": "Makki",
+        "halaat_ur": "سورۃ الاخلاص مکہ مکرمہ میں نازل ہوئی۔ مشرکینِ مکہ نے نبی کریم صلی اللہ علیہ وسلم سے سوال کیا تھا کہ آپ کے رب کا نسب کیا ہے، وہ کس چیز سے بنا ہے، سونا، چاندی یا کسی اور چیز سے؟ اس کے جواب میں یہ سورت نازل ہوئی۔",
+        "halaat_en": "Surah Al-Ikhlas is a Makki Surah revealed in Makkah when polytheists asked the Prophet Muhammad (peace be upon him) about the lineage and nature of his Lord. It presents pure monotheism (Tawheed).",
+        "halaat_ar": "سورة الإخلاص مكية، نزلت جوابا لمن سأل النبي صلى الله عليه وسلم عن نسب ربه وصفاته، فقررت التوحيد الخالص لله وحده.",
+        "tafseer_ur": "معتبر تفاسیر کے مطابق اس سورت میں توحیدِ خالص بیان کی گئی ہے: اللہ ایک ہے جس کی ذات و صفات میں کوئی شریک نہیں، وہ صمد ہے یعنی بے نیاز ہے اور ہر مخلوق اس کی محتاج ہے، نہ اس کی کوئی اولاد ہے اور نہ وہ کسی سے پیدا ہوا، اور نہ اس کے برابر یا ہم پلہ کوئی ہے۔",
+    },
+    113: {
+        "revelation": "Makki",
+        "halaat_ur": "سورۃ الفلق مکہ مکرمہ میں نازل ہوئی۔ اس میں اللہ تعالیٰ کی پناہ طلب کرنے کا حکم دیا گیا ہے تاکہ انسان رات کے اندھیروں، جادو کے اثرات اور حسد کرنے والوں کے شر سے محفوظ رہے۔",
+        "halaat_en": "Surah Al-Falaq is a Makki Surah teaching believers to seek refuge in Allah from external harms, nighttime dangers, envy, and harmful acts.",
+        "halaat_ar": "سورة الفلق مكية، وتعلّم المؤمن الاستعاذة بالله من شر المخلوقات ومن شر غاسق إذا وقب ومن شر النفاثات والحاسد.",
+        "tafseer_ur": "تفسیر کے مطابق فلق سے مراد صبح کی روشنی یا تمام مخلوقات کی پیدائش ہے۔ مومن کو حکم ہے کہ وہ ہر شر سے بچنے کے لیے صرف اللہ کی پناہ لے، خصوصاً رات کی تاریکی، نقصان پہنچانے والے اعمال اور حاسد کے حسد سے۔",
+    },
+    114: {
+        "revelation": "Makki",
+        "halaat_ur": "سورۃ الناس مکہ مکرمہ میں نازل ہوئی۔ یہ قرآنِ مجید کی آخری سورت ہے جو دلوں میں وسوسے ڈالنے والے شیطان اور پوشیدہ شر سے اللہ کی پناہ مانگنے کی تعلیم دیتی ہے۔",
+        "halaat_en": "Surah An-Nas is the final Surah of the Quran, revealed in Makkah, teaching refuge in Allah from whisperers (waswasah) among jinn and mankind.",
+        "halaat_ar": "سورة الناس مكية وهي آخر سور القرآن، وتعلّم الاستعاذة برب الناس وملكهم وإلههم من شر الوسواس الخناس.",
+        "tafseer_ur": "تفسیر کے مطابق اس سورت میں اللہ کی تین صفات رب، ملک اور الٰہ کے واسطے سے پناہ مانگی گئی ہے، کیونکہ وسوسہ ڈالنے والا خناس جب انسان اللہ کا ذکر کرتا ہے تو پیچھے ہٹ جاتا ہے اور غفلت میں وسوسہ ڈالتا ہے۔",
+    },
+    108: {
+        "revelation": "Makki",
+        "halaat_ur": "سورۃ الکوثر مکہ مکرمہ میں نازل ہوئی۔ جب نبی کریم صلی اللہ علیہ وسلم کے صاحبزادوں کا انتقال ہوا تو کفارِ مکہ نے طعنہ دیا کہ آپ ابتر یعنی بے نام و نشان ہو گئے۔ اس کے جواب میں اللہ نے آپ کو کوثر کی بے شمار خیر عطا فرمانے کی خوشخبری دی۔",
+        "halaat_en": "Surah Al-Kawthar is a Makki Surah revealed after opponents mocked the Prophet Muhammad (peace be upon him) following the loss of his sons, promising him abundant good while cutting off his detractors.",
+        "halaat_ar": "سورة الكوثر مكية، نزلت تسلية للنبي صلى الله عليه وسلم وردا على من عيّره بانقطاع العقب، فبشّره الله بالخير الكثير وأمر بالصلاة والنحر.",
+        "tafseer_ur": "معتبر تفاسیر کے مطابق کوثر سے مراد خیرِ کثیر، نبوت، علم، امت کی کثرت اور جنت کا حوضِ کوثر ہے۔ اس شکرانے میں نماز پڑھنے اور قربانی کرنے کا حکم دیا گیا ہے، اور دشمن کو ابتر قرار دیا گیا۔",
+    },
+}
+
 
 def get_ist_now() -> datetime.datetime:
     return datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5, minutes=30)))
@@ -499,16 +538,17 @@ def parse_quran_request(text: str) -> Tuple[Optional[int], Optional[int], Option
 
 async def fetch_quran_verses(
     surah_num: int, start_ay: Optional[int], end_ay: Optional[int], is_last: bool
-) -> Tuple[str, str, int, str, str]:
+) -> Tuple[str, str, int, List[Tuple[int, str, str, str]]]:
+    """Returns (english_name, arabic_name, total_ayahs, list of (ayah_num, ar_text, ur_text, en_text))."""
     url = f"https://api.alquran.cloud/v1/surah/{surah_num}/editions/quran-uthmani,ur.jalandhry,en.sahih"
     try:
         async with httpx.AsyncClient(timeout=12.0) as client:
             r = await client.get(url)
             if r.status_code != 200:
-                return "", "", 0, "", ""
+                return "", "", 0, []
             editions = r.json().get("data", [])
             if len(editions) < 3:
-                return "", "", 0, "", ""
+                return "", "", 0, []
             ar_ed, ur_ed, en_ed = editions[0], editions[1], editions[2]
             s_name_en = ar_ed.get("englishName") or f"Surah {surah_num}"
             s_name_ar = ar_ed.get("name") or s_name_en
@@ -528,20 +568,85 @@ async def fetch_quran_verses(
                 s_idx = 0
                 e_idx = min(total, 6)
 
-            lines = []
-            ur_fallback_parts = []
+            out_ayahs: List[Tuple[int, str, str, str]] = []
             for idx in range(s_idx, e_idx):
                 anum = idx + 1
-                ar_t = ar_list[idx].get("text", "") if idx < len(ar_list) else ""
-                ur_t = ur_list[idx].get("text", "") if idx < len(ur_list) else ""
-                en_t = en_list[idx].get("text", "") if idx < len(en_list) else ""
-                lines.append(f"Ayah {anum} | AR: {ar_t} | UR: {ur_t} | EN: {en_t}")
-                ur_fallback_parts.append(f"آیت {anum}: {ur_t}")
+                ar_t = (ar_list[idx].get("text", "") if idx < len(ar_list) else "").strip()
+                ur_t = (ur_list[idx].get("text", "") if idx < len(ur_list) else "").strip()
+                en_t = (en_list[idx].get("text", "") if idx < len(en_list) else "").strip()
+                out_ayahs.append((anum, ar_t, ur_t, en_t))
 
-            return s_name_en, s_name_ar, total, "\n".join(lines), " ".join(ur_fallback_parts)
+            return s_name_en, s_name_ar, total, out_ayahs
     except Exception as ex:
         print(f"Quran API error: {ex}")
-        return "", "", 0, "", ""
+        return "", "", 0, []
+
+
+async def build_accurate_surah_audio(
+    surah_num: int, start_ay: Optional[int], end_ay: Optional[int], is_last: bool, lang: str
+) -> Tuple[str, str]:
+    """Builds clean, accurate Surah introduction, nazool/halaat, translation, and tafseer audio without broken AI phrasing."""
+    s_name_en, s_name_ar, total_ay, ayahs = await fetch_quran_verses(surah_num, start_ay, end_ay, is_last)
+    if not ayahs:
+        if lang == "AR":
+            txt = f"تعذر تحميل بيانات السورة رقم {surah_num}."
+            url, _ = await make_tts_with_duration(txt, "AR-M")
+            return f"SURAH {surah_num}", url
+        if lang == "EN":
+            txt = f"Could not load Surah {surah_num} details right now."
+            url, _ = await make_tts_with_duration(txt, "EN-M")
+            return f"SURAH {surah_num}", url
+        txt = f"سورہ نمبر {surah_num} کی معلومات ابھی لوڈ نہیں ہو سکیں۔"
+        url, _ = await make_tts_with_duration(txt, "UR-M")
+        return f"SURAH {surah_num}", url
+
+    note = SURAH_CLASSICAL_NOTES.get(surah_num, {})
+    rev_type = note.get("revelation", "Quran")
+
+    if lang == "AR":
+        halaat = note.get(
+            "halaat_ar",
+            f"{s_name_ar} السورة رقم {surah_num} في القرآن الكريم وعدد آياتها {total_ay}."
+        )
+        parts = [f"{s_name_ar}، السورة رقم {surah_num}، وعدد آياتها {total_ay}. {halaat}"]
+        for anum, ar_t, _, _ in ayahs:
+            parts.append(f"الآية {anum}: {ar_t}.")
+        script = " ".join(parts)
+        url, _ = await make_tts_with_duration(script, "AR-M")
+        return f"TAFSEER {surah_num}", url
+
+    if lang == "EN":
+        halaat = note.get(
+            "halaat_en",
+            f"{s_name_en} is Surah number {surah_num} of the Quran with {total_ay} verses."
+        )
+        parts = [f"{s_name_en}, Surah {surah_num}, {rev_type}, {total_ay} verses. {halaat}"]
+        for anum, _, _, en_t in ayahs:
+            parts.append(f"Verse {anum} translation: {en_t}")
+        script = " ".join(parts)
+        url, _ = await make_tts_with_duration(script, "EN-M")
+        return f"TAFSEER {surah_num}", url
+
+    # Urdu / Roman Urdu spoken by fluent Urdu male voice (`ur-PK-AsadNeural`) using clean Urdu script
+    halaat_ur = note.get(
+        "halaat_ur",
+        f"یہ سورہ نمبر {surah_num} ہے جس کی کل آیات {total_ay} ہیں۔"
+    )
+    tafseer_ur = note.get("tafseer_ur", "")
+
+    parts = [
+        f"سورہ نمبر {surah_num}، کل آیات {total_ay}۔ {halaat_ur}",
+        "اب ترجمہ سماعت فرمائیں۔",
+    ]
+    for anum, _, ur_t, _ in ayahs:
+        parts.append(f"آیت {anum}: {ur_t}")
+
+    if tafseer_ur:
+        parts.append(f"معتبر تفسیر: {tafseer_ur}")
+
+    script = " ".join(parts)
+    url, _ = await make_tts_with_duration(script, "UR-M")
+    return f"TAFSEER {surah_num}", url
 
 
 async def fetch_rss_items(urls: List[str], limit: int = 5) -> List[str]:
@@ -682,7 +787,7 @@ async def get_available_groq_models(key: str) -> List[str]:
     return FALLBACK_GROQ_MODELS
 
 
-async def call_groq_bilingual(system_prompt: str, user_prompt: str, lang: str, max_tokens: int = 1100) -> Optional[Tuple[str, str]]:
+async def call_groq_bilingual(system_prompt: str, user_prompt: str, lang: str, max_tokens: int = 950) -> Optional[Tuple[str, str]]:
     if not RAW_KEYS:
         return None
 
@@ -711,7 +816,7 @@ async def call_groq_bilingual(system_prompt: str, user_prompt: str, lang: str, m
         models = await get_available_groq_models(key)
         for model in models:
             try:
-                async with httpx.AsyncClient(timeout=22.0) as client:
+                async with httpx.AsyncClient(timeout=20.0) as client:
                     resp = await client.post(
                         "https://api.groq.com/openai/v1/chat/completions",
                         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
@@ -848,7 +953,7 @@ async def fetch_google_tts_mp3(text: str, lang_code: str) -> bytes:
     mp3_bytes = bytearray()
     headers = {"User-Agent": "Mozilla/5.0"}
     async with httpx.AsyncClient(timeout=12.0, headers=headers) as client:
-        for ch in chunks[:18]:
+        for ch in chunks[:20]:
             url = (
                 f"https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob"
                 f"&tl={tl}&q={urllib.parse.quote(ch)}"
@@ -998,37 +1103,7 @@ async def generate_answer(heard: str, lang: str) -> Tuple[str, str, str]:
             ans = f"In {place}, it is currently {temp} degrees Celsius with wind at {wind} km/h."
             return "WEATHER", ans, ans
 
-    # 4. Quran Tarjuma + Motabar Tafseer + Surah Detail (Nazool & Waqt Ke Halaat)
-    s_num, s_ay, e_ay, is_last = parse_quran_request(heard)
-    detail_words = [
-        "detail", "details", "tafseel", "tafsil", "mukammal", "poora", "pura",
-        "kahan", "kab", "waqt", "halaat", "halat", "nazool", "nuzool", "shaan",
-        "مکمل", "تفصیل", "حالات", "نزول",
-    ]
-    if is_tafseer_intent(heard) or (s_num is not None and any(w in low for w in detail_words)):
-        if s_num:
-            s_name_en, s_name_ar, total_ay, verse_block, ur_fb = await fetch_quran_verses(s_num, s_ay, e_ay, is_last)
-            if verse_block:
-                sys_p = (
-                    "You are a careful, authentic Sunni Islamic scholar following classical Tafseer (Tafseer-e-Usmani, Ma'ariful Quran, and Tafseer al-Jalalayn). "
-                    "Never use psychology/nafsaniat jargon, personal guesses, or broken words. State facts clearly and completely.\n"
-                    "Give the response in this exact order:\n"
-                    "1) Surah Name, Surah Number, exact total ayahs, and whether it is Makki or Madani.\n"
-                    "2) Place of nazool and historical circumstances at that time (waqt ke halaat / shaan-e-nuzool).\n"
-                    "3) Clear tarjuma (translation) of every verse in the list, followed by concise, authentic tafseer."
-                )
-                usr_p = (
-                    f"User question: {heard}\n"
-                    f"Surah Number: {s_num} | English Name: {s_name_en} | Arabic Name: {s_name_ar} | Total Ayahs: {total_ay}\n"
-                    f"Verified Ayahs:\n{verse_block}"
-                )
-                res = await call_groq_bilingual(sys_p, usr_p, lang, max_tokens=1400)
-                if res:
-                    return f"SURAH {s_num}", res[0], res[1]
-                en_fb = clean_ascii(verse_block)[:360]
-                return f"SURAH {s_num}", en_fb, (ur_fb if lang == "UR" and ur_fb else en_fb)
-
-    # 5. Live Cricket
+    # 4. Live Cricket
     if any(w in low for w in ["cricket", "ipl", "t20", "odi", "test match", "score", "virat", "rohit", "babar", "کرکٹ", "اسکور", "میچ", "क्रिकेट"]):
         headlines = await fetch_cricket_context(heard)
         if headlines:
@@ -1043,7 +1118,7 @@ async def generate_answer(heard: str, lang: str) -> Tuple[str, str, str]:
             fb = clean_ascii(". ".join(headlines[:2]))[:260]
             return "CRICKET", fb, fb
 
-    # 6. Live News
+    # 5. Live News
     if any(w in low for w in ["news", "khabar", "khabrein", "khabrai", "headlines", "taza", "latest", "breaking", "خبر", "خبریں", "أخبار", "खबर", "खबरें"]):
         headlines = await fetch_news_context(heard)
         if headlines:
@@ -1058,7 +1133,7 @@ async def generate_answer(heard: str, lang: str) -> Tuple[str, str, str]:
             fb = clean_ascii(". ".join(headlines[:2]))[:260]
             return "NEWS", fb, fb
 
-    # 7. General Knowledge + Full Islamic Knowledge
+    # 6. General Knowledge + Full Islamic Knowledge
     sys_p = (
         f"You are an accurate, all-rounder male voice assistant based in Srinagar, Kashmir. "
         f"Today is {now.strftime('%A, %d %B %Y, %I:%M %p IST')} (Hijri: {hijri_en}). "
@@ -1243,12 +1318,28 @@ async def chat(request: Request):
         "kahan", "kab", "waqt", "halaat", "halat", "nazool", "nuzool", "shaan",
         "مکمل", "تفصیل", "حالات", "نزول",
     ]
-    s_num, _, _, _ = parse_quran_request(heard)
+    s_num, s_ay, e_ay, is_last = parse_quran_request(heard)
     is_quran_play = any(w in low for w in [
         "surah", "sura", "sury", "suraj", "quran", "tilawat", "recite", "recitation",
         "سورہ", "سورة", "قرآن", "تلاوت", "सूरह", "कुरान"
     ])
-    if is_quran_play and not is_tafseer_intent(heard) and not (s_num is not None and any(w in low for w in detail_words)):
+
+    # Translation / Tafseer / Nazool / Halaat -> play directly as clean MP3 audio stream without broken AI phrasing
+    if s_num is not None and (is_tafseer_intent(heard) or any(w in low for w in detail_words)):
+        hdr_title, audio_rel = await build_accurate_surah_audio(s_num, s_ay, e_ay, is_last, lang)
+        full_audio_url = f"https://esp32-ai-voice.onrender.com{audio_rel}"
+        return {
+            "action": "STREAM",
+            "lang": lang,
+            "header": hdr_title,
+            "title": hdr_title,
+            "url": full_audio_url,
+            "voice": voice_code,
+            "volume": STATE["volume"],
+            "monster": STATE["monster"],
+        }
+
+    if is_quran_play:
         num = s_num or 1
         stream_url = f"https://server8.mp3quran.net/afs/{num:03d}.mp3"
         return {
