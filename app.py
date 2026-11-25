@@ -1,11 +1,11 @@
 import os
 import re
-import json
 import time
 import uuid
 import urllib.parse
 import xml.etree.ElementTree as ET
 import datetime
+from collections import deque
 from typing import Optional, List, Tuple, Dict
 import httpx
 import edge_tts
@@ -16,8 +16,6 @@ app = FastAPI()
 
 AUDIO_DIR = "/tmp/tts_audio"
 os.makedirs(AUDIO_DIR, exist_ok=True)
-HISTORY_FILE = "/tmp/chat_history.json"
-MAX_HISTORY = 24
 
 RAW_KEYS = [
     k.strip()
@@ -40,6 +38,7 @@ FALLBACK_GROQ_MODELS = [
 ]
 
 MODEL_CACHE: Dict[str, Tuple[float, List[str]]] = {}
+CHAT_HISTORY: deque = deque(maxlen=16)
 
 STATE = {
     "voice": "UR-M",
@@ -301,29 +300,6 @@ SURAH_CLASSICAL_NOTES: Dict[int, Dict[str, str]] = {
 }
 
 
-def load_history() -> List[Dict]:
-    if os.path.exists(HISTORY_FILE):
-        try:
-            with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if isinstance(data, list):
-                    return data[-MAX_HISTORY:]
-        except Exception as ex:
-            print(f"History load error: {ex}")
-    return []
-
-
-def append_history(entry: Dict) -> None:
-    hist = load_history()
-    hist.append(entry)
-    hist = hist[-MAX_HISTORY:]
-    try:
-        with open(HISTORY_FILE, "w", encoding="utf-8") as f:
-            json.dump(hist, f, ensure_ascii=False)
-    except Exception as ex:
-        print(f"History save error: {ex}")
-
-
 def get_ist_now() -> datetime.datetime:
     return datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5, minutes=30)))
 
@@ -394,33 +370,13 @@ def clean_voice_script(text: str) -> str:
     return s
 
 
-def detect_length_mode(text: str) -> str:
-    low = (text or "").lower()
-    if any(w in low for w in [
-        "short", "brief", "briefly", "mukhtasar", "chhota", "chota", "kam lafzon",
-        "in short", "one line", "two lines", "مختصر", "چھوٹا", "संक्षिप्त", "छोटा"
-    ]):
-        return "brief"
-    if any(w in low for w in [
-        "long", "detailed", "detail", "tafseel", "tafsil", "mukammal", "poora", "pura",
-        "in depth", "deeply", "expand", "مفصل", "تفصیل", "مکمل", "विस्तार", "पूरा"
-    ]):
-        return "long"
-    return "normal"
-
-
 def format_history_for_prompt() -> str:
-    hist = load_history()
-    if not hist:
+    if not CHAT_HISTORY:
         return ""
     lines = []
-    for idx, item in enumerate(hist[-10:], 1):
-        lines.append(f"{idx}. User: {item.get('u', '')} | Assistant: {item.get('a', '')}")
-    return (
-        "Saved Conversation History (ALWAYS keep track of earlier questions, topics, and answers so follow-ups are accurate):\n"
-        + "\n".join(lines)
-        + "\n\n"
-    )
+    for idx, item in enumerate(list(CHAT_HISTORY)[-8:], 1):
+        lines.append(f"{idx}. User: {item['u']} -> Reply: {item['a']}")
+    return "Full Conversation Memory (ALWAYS use this context for follow-ups, pronouns, or continuation):\n" + "\n".join(lines) + "\n\n"
 
 
 def is_follow_up_ayah_request(text: str) -> bool:
@@ -546,8 +502,7 @@ def replace_number_words(text: str) -> str:
 
 
 def get_last_quran_context() -> Tuple[Optional[int], Optional[int]]:
-    hist = load_history()
-    for item in reversed(hist):
+    for item in reversed(list(CHAT_HISTORY)):
         if item.get("surah_num") is not None:
             return item.get("surah_num"), item.get("last_ayah")
     return None, None
@@ -567,7 +522,7 @@ def parse_quran_request(text: str) -> Tuple[Optional[int], Optional[int], Option
         surah_num = max(1, min(114, int(m_surah.group(1))))
     else:
         for name in sorted(SURAH_NAMES.keys(), key=len, reverse=True):
-            if re.search(rf"(?<!\w){re.escape(name)}(?!\w)", low):
+            if name in low:
                 surah_num = SURAH_NAMES[name]
                 break
 
@@ -875,44 +830,31 @@ async def get_available_groq_models(key: str) -> List[str]:
     return FALLBACK_GROQ_MODELS
 
 
-async def call_groq_bilingual(system_prompt: str, user_prompt: str, lang: str, length_mode: str = "normal") -> Optional[Tuple[str, str]]:
+async def call_groq_bilingual(system_prompt: str, user_prompt: str, lang: str, max_tokens: int = 650) -> Optional[Tuple[str, str]]:
     if not RAW_KEYS:
         return None
 
     history_ctx = format_history_for_prompt()
 
-    if length_mode == "brief":
-        length_rule = "LENGTH MODE: BRIEF. Give a short, crisp answer in 1 to 2 clear sentences."
-        max_tokens = 260
-    elif length_mode == "long":
-        length_rule = "LENGTH MODE: DETAILED / LONG. Give a thorough, well-structured, complete answer with key points and examples, ending cleanly."
-        max_tokens = 1200
-    else:
-        length_rule = "LENGTH MODE: BALANCED. Give a clear, accurate, complete answer in 3 to 4 sentences."
-        max_tokens = 650
-
     if lang == "UR":
         format_rule = (
             "STRICT LANGUAGE LOCK: The user asked in URDU/ROMAN URDU.\n"
             "Reply using EXACTLY these two lines and nothing else:\n"
-            "DISPLAY: <Clean, accurate answer in Roman Urdu using A-Z letters and 0-9 numbers only; NO Urdu script, NO English sentences, NO words like DISPLAY or VOICE>\n"
-            "VOICE: <Exact same clean, accurate answer in natural Urdu script (اردو) for a male Urdu voice; never say the words DISPLAY or VOICE>\n"
-            f"{length_rule}\n"
-            "Always resolve follow-ups using Saved Conversation History."
+            "DISPLAY: <Clear, accurate, concise answer in Roman Urdu using A-Z letters and 0-9 numbers only; NO Urdu script, NO English sentences, NO words like DISPLAY or VOICE>\n"
+            "VOICE: <Exact same clean, accurate, concise answer in natural Urdu script (اردو) for a male Urdu voice; never say the words DISPLAY or VOICE>\n"
+            "Keep answers direct, factual, and 3 to 5 clear sentences. Always resolve follow-ups using Full Conversation Memory."
         )
     elif lang == "AR":
         format_rule = (
             "STRICT LANGUAGE LOCK: The user asked in ARABIC.\n"
-            "Reply ONLY in clear, accurate Modern Standard Arabic. No Urdu, no English words, no markdown.\n"
-            f"{length_rule}\n"
-            "Resolve follow-ups using Saved Conversation History."
+            "Reply ONLY in clear, accurate, concise Modern Standard Arabic (3 to 5 sentences). No Urdu, no English words, no markdown.\n"
+            "Resolve follow-ups using Full Conversation Memory."
         )
     else:
         format_rule = (
             "STRICT LANGUAGE LOCK: The user asked in ENGLISH.\n"
-            "Use clear, natural English at an easy-to-understand pace (avoid overly rare or tongue-twisting words). No markdown.\n"
-            f"{length_rule}\n"
-            "Always directly answer the user's question and resolve follow-ups using Saved Conversation History."
+            "Use clear, natural English at an easy, brisk pace (3 to 5 clear sentences, avoiding overly rare or tongue-twisting words). No markdown.\n"
+            "Always directly answer the user's question and resolve follow-ups using Full Conversation Memory."
         )
 
     full_sys = system_prompt + "\n\n" + history_ctx + format_rule
@@ -938,7 +880,7 @@ async def call_groq_bilingual(system_prompt: str, user_prompt: str, lang: str, l
                     if resp.status_code == 200:
                         raw = resp.json()["choices"][0]["message"]["content"].strip()
                         raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.S).strip()
-                        print(f"Groq OK [{model}] lang={lang} mode={length_mode}")
+                        print(f"Groq OK [{model}] lang={lang}")
 
                         if lang == "UR":
                             m_disp = re.search(r"DISPLAY:\s*(.+?)(?=\nVOICE:|\Z)", raw, flags=re.S | re.I)
@@ -1013,7 +955,7 @@ async def wiki_fallback(query: str) -> Tuple[str, str]:
 async def transcribe_wav(wav_bytes: bytes) -> str:
     if not RAW_KEYS:
         return ""
-    hint_prompt = "Surah Baqarah aayat 180 se 185 ki tafseer sunao, Surah Ikhlas ki tafseer sunao, Is se aagay aayat ka tarjuma batao, Brief mein batao, Tafseel se batao."
+    hint_prompt = "Surah Baqarah aayat 180 se 185 ki tafseer sunao, Is se aagay aayat ka tarjuma batao, What are its types, Abhi time kya hua, Namaz, Cricket, News."
     for key in RAW_KEYS:
         try:
             async with httpx.AsyncClient(timeout=18.0) as client:
@@ -1076,6 +1018,7 @@ async def make_tts_with_duration(text: str, voice_code: str) -> Tuple[str, int]:
     fid = uuid.uuid4().hex[:10]
     out_path = os.path.join(AUDIO_DIR, f"{fid}.mp3")
     voice = VOICE_MAP.get(voice_code, "ur-PK-AsadNeural")
+    # Slightly brisk, clear English pacing (-8%) so it is easy to understand without dragging
     if voice_code == "EN-M" and STATE["speed"] == "Norm":
         rate = "-8%"
     else:
@@ -1108,6 +1051,7 @@ async def make_tts_with_duration(text: str, voice_code: str) -> Tuple[str, int]:
     with open(out_path, "wb") as f:
         f.write(audio_chunks)
 
+    # Edge TTS MP3 is ~48kbps (~6000 bytes/s); keep duration aligned with actual playback so OLED text matches voice
     bps = 6200.0 if tts_source == "edge" else 4400.0
     est_ms = int((len(audio_chunks) / bps) * 1000) if audio_chunks else 1800
     total_ms = last_end_ms if last_end_ms > 0 else max(1100, est_ms)
@@ -1151,7 +1095,7 @@ def build_synced_pages(display_text: str, total_ms: int, lang: str) -> List[Dict
             if cur:
                 chunks.append(cur)
 
-    chunks = chunks[:20]
+    chunks = chunks[:16]
     if not chunks:
         chunks = [txt[:max_chars]]
 
@@ -1170,7 +1114,6 @@ async def generate_answer(heard: str, lang: str) -> Tuple[str, str, str]:
     hijri_en = f"{hd} {hm_en} {hy}"
     hijri_ur = f"{hd} {hm_ur} {hy} ہجری"
     low = heard.lower()
-    length_mode = detect_length_mode(heard)
 
     if any(w in low for w in ["namaz", "nimaz", "meeqat", "miqat", "prayer time", "salah time", "نماز", "صلاة", "اوقات", "नमाज", "नमाज़"]):
         disp, tts = build_namaz_response(lang)
@@ -1213,10 +1156,10 @@ async def generate_answer(heard: str, lang: str) -> Tuple[str, str, str]:
         if headlines:
             sys_p = (
                 f"You are a live cricket presenter. Today is {now.strftime('%d %b %Y, %I:%M %p IST')}. "
-                "Report ONLY facts from the live cricket headlines below clearly and accurately."
+                "Report ONLY facts from the live cricket headlines below in 3 to 4 complete sentences."
             )
             usr_p = f"User question: {heard}\nLive Cricket Feeds:\n" + "\n".join(f"- {h}" for h in headlines)
-            res = await call_groq_bilingual(sys_p, usr_p, lang, length_mode)
+            res = await call_groq_bilingual(sys_p, usr_p, lang, max_tokens=500)
             if res:
                 return "CRICKET", res[0], res[1]
             fb = clean_ascii(". ".join(headlines[:2]))[:260]
@@ -1227,22 +1170,23 @@ async def generate_answer(heard: str, lang: str) -> Tuple[str, str, str]:
         if headlines:
             sys_p = (
                 f"You are an accurate live news anchor. Today is {now.strftime('%d %b %Y, %I:%M %p IST')}. "
-                "Summarize the most relevant live headlines below clearly and accurately."
+                "Summarize the most relevant live headlines below clearly in 3 to 4 complete sentences."
             )
             usr_p = f"User asked: {heard}\nLive Headlines:\n" + "\n".join(f"- {h}" for h in headlines)
-            res = await call_groq_bilingual(sys_p, usr_p, lang, length_mode)
+            res = await call_groq_bilingual(sys_p, usr_p, lang, max_tokens=550)
             if res:
                 return "NEWS", res[0], res[1]
             fb = clean_ascii(". ".join(headlines[:2]))[:260]
             return "NEWS", fb, fb
 
     sys_p = (
-        f"You are an all-rounder, accurate, and helpful male voice assistant based in Srinagar, Kashmir. "
+        f"You are an accurate, factual male voice assistant based in Srinagar, Kashmir. "
         f"Today is {now.strftime('%A, %d %B %Y, %I:%M %p IST')} (Hijri: {hijri_en}). "
-        "You answer any question across general knowledge, education, psychology, science, history, geography, technology, and Islamic topics with high accuracy. "
-        "Always check Saved Conversation History so follow-up questions or references connect seamlessly to earlier turns."
+        "Give direct, accurate, clear answers across education, philosophy, science, history, geography, technology, and Islamic topics. "
+        "When the user asks a follow-up like 'What are its types?' or 'Explain more', use Full Conversation Memory to answer about the exact subject from the previous turn. "
+        "Keep answers clear, accurate, and complete in 3 to 5 sentences."
     )
-    res = await call_groq_bilingual(sys_p, heard, lang, length_mode)
+    res = await call_groq_bilingual(sys_p, heard, lang, max_tokens=650)
     if res:
         return "ANSWER", res[0], res[1]
 
@@ -1430,9 +1374,9 @@ async def chat(request: Request):
         hdr_title, audio_rel, summary_txt, actual_last_ay = await build_accurate_surah_audio(
             s_num, s_ay, e_ay, is_last, lang
         )
-        append_history({
+        CHAT_HISTORY.append({
             "u": heard,
-            "a": summary_txt[:320],
+            "a": summary_txt[:260],
             "surah_num": s_num,
             "last_ayah": actual_last_ay,
         })
@@ -1450,7 +1394,7 @@ async def chat(request: Request):
 
     if is_quran_play:
         num = s_num or 1
-        append_history({"u": heard, "a": f"Played Surah {num}", "surah_num": num, "last_ayah": None})
+        CHAT_HISTORY.append({"u": heard, "a": f"Played Surah {num}", "surah_num": num, "last_ayah": None})
         stream_url = f"https://server8.mp3quran.net/afs/{num:03d}.mp3"
         return {
             "action": "STREAM",
@@ -1464,7 +1408,7 @@ async def chat(request: Request):
         }
 
     header, disp, tts = await generate_answer(heard, lang)
-    append_history({"u": heard, "a": disp[:320], "surah_num": s_num, "last_ayah": None})
+    CHAT_HISTORY.append({"u": heard, "a": disp[:260], "surah_num": s_num, "last_ayah": None})
     audio_url, total_ms = await make_tts_with_duration(tts, voice_code)
     pages = build_synced_pages(disp, total_ms, lang)
 
