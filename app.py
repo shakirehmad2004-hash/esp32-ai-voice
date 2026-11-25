@@ -38,7 +38,7 @@ FALLBACK_GROQ_MODELS = [
 ]
 
 MODEL_CACHE: Dict[str, Tuple[float, List[str]]] = {}
-CHAT_HISTORY: deque = deque(maxlen=10)
+CHAT_HISTORY: deque = deque(maxlen=16)
 
 STATE = {
     "voice": "UR-M",
@@ -49,7 +49,7 @@ STATE = {
 
 VOICE_MAP = {
     "UR-M": "ur-PK-AsadNeural",
-    "EN-M": "en-IN-PrabhatNeural",
+    "EN-M": "en-US-GuyNeural",
     "AR-M": "ar-SA-HamedNeural",
 }
 
@@ -60,9 +60,9 @@ GTTS_LANG_MAP = {
 }
 
 SPEED_MAP = {
-    "Slow": "-25%",
+    "Slow": "-18%",
     "Norm": "+0%",
-    "Fast": "+8%",
+    "Fast": "+12%",
 }
 
 MEEQAT_ANCHORS = [
@@ -374,9 +374,9 @@ def format_history_for_prompt() -> str:
     if not CHAT_HISTORY:
         return ""
     lines = []
-    for item in list(CHAT_HISTORY)[-5:]:
-        lines.append(f"Previous User Question: {item['u']}\nPrevious Answer: {item['a']}")
-    return "Previous Conversation Memory (use this to resolve follow-ups like 'its types', 'more details', 'is ke baare mein'):\n" + "\n".join(lines) + "\n\n"
+    for idx, item in enumerate(list(CHAT_HISTORY)[-8:], 1):
+        lines.append(f"{idx}. User: {item['u']} -> Reply: {item['a']}")
+    return "Full Conversation Memory (ALWAYS use this context for follow-ups, pronouns, or continuation):\n" + "\n".join(lines) + "\n\n"
 
 
 def is_follow_up_ayah_request(text: str) -> bool:
@@ -533,7 +533,6 @@ def parse_quran_request(text: str) -> Tuple[Optional[int], Optional[int], Option
 
     norm = replace_number_words(low)
 
-    # Follow-up next ayah after previous ayah/range (e.g., "is se aagay aayat ka tarjuma batao" after 180..185 -> 186..188)
     if is_follow_up_ayah_request(low) and surah_num is not None:
         base_ay = (last_ay or 1) + 1
         return surah_num, base_ay, base_ay + 2, False
@@ -831,7 +830,7 @@ async def get_available_groq_models(key: str) -> List[str]:
     return FALLBACK_GROQ_MODELS
 
 
-async def call_groq_bilingual(system_prompt: str, user_prompt: str, lang: str, max_tokens: int = 950) -> Optional[Tuple[str, str]]:
+async def call_groq_bilingual(system_prompt: str, user_prompt: str, lang: str, max_tokens: int = 650) -> Optional[Tuple[str, str]]:
     if not RAW_KEYS:
         return None
 
@@ -841,21 +840,21 @@ async def call_groq_bilingual(system_prompt: str, user_prompt: str, lang: str, m
         format_rule = (
             "STRICT LANGUAGE LOCK: The user asked in URDU/ROMAN URDU.\n"
             "Reply using EXACTLY these two lines and nothing else:\n"
-            "DISPLAY: <Clean, accurate answer in Roman Urdu using A-Z letters and 0-9 numbers only; NO Urdu script, NO English sentences, NO words like DISPLAY or VOICE>\n"
-            "VOICE: <Exact same clean, accurate answer in natural, fluent Urdu script (اردو) for a male Urdu voice; never say the words DISPLAY or VOICE>\n"
-            "Always directly answer the user's question and resolve follow-ups using Previous Conversation Memory."
+            "DISPLAY: <Clear, accurate, concise answer in Roman Urdu using A-Z letters and 0-9 numbers only; NO Urdu script, NO English sentences, NO words like DISPLAY or VOICE>\n"
+            "VOICE: <Exact same clean, accurate, concise answer in natural Urdu script (اردو) for a male Urdu voice; never say the words DISPLAY or VOICE>\n"
+            "Keep answers direct, factual, and 3 to 5 clear sentences. Always resolve follow-ups using Full Conversation Memory."
         )
     elif lang == "AR":
         format_rule = (
             "STRICT LANGUAGE LOCK: The user asked in ARABIC.\n"
-            "Reply ONLY in clear, accurate Modern Standard Arabic. No Urdu, no English words, no markdown.\n"
-            "Resolve follow-ups using Previous Conversation Memory."
+            "Reply ONLY in clear, accurate, concise Modern Standard Arabic (3 to 5 sentences). No Urdu, no English words, no markdown.\n"
+            "Resolve follow-ups using Full Conversation Memory."
         )
     else:
         format_rule = (
             "STRICT LANGUAGE LOCK: The user asked in ENGLISH.\n"
-            "Use simple, clear, everyday English with easy pronunciation (avoid overly complex or rare words). No markdown.\n"
-            "Always directly answer the user's question and resolve follow-ups using Previous Conversation Memory."
+            "Use clear, natural English at an easy, brisk pace (3 to 5 clear sentences, avoiding overly rare or tongue-twisting words). No markdown.\n"
+            "Always directly answer the user's question and resolve follow-ups using Full Conversation Memory."
         )
 
     full_sys = system_prompt + "\n\n" + history_ctx + format_rule
@@ -1019,9 +1018,9 @@ async def make_tts_with_duration(text: str, voice_code: str) -> Tuple[str, int]:
     fid = uuid.uuid4().hex[:10]
     out_path = os.path.join(AUDIO_DIR, f"{fid}.mp3")
     voice = VOICE_MAP.get(voice_code, "ur-PK-AsadNeural")
-    # Slightly slower, clear pacing for English in default Norm mode
+    # Slightly brisk, clear English pacing (-8%) so it is easy to understand without dragging
     if voice_code == "EN-M" and STATE["speed"] == "Norm":
-        rate = "-22%"
+        rate = "-8%"
     else:
         rate = SPEED_MAP.get(STATE["speed"], "+0%")
     clean_text = clean_voice_script(text) or "جی بتائیے۔"
@@ -1052,9 +1051,10 @@ async def make_tts_with_duration(text: str, voice_code: str) -> Tuple[str, int]:
     with open(out_path, "wb") as f:
         f.write(audio_chunks)
 
-    bps = 5600.0 if tts_source == "edge" else 4200.0
-    est_ms = int((len(audio_chunks) / bps) * 1000) if audio_chunks else 2000
-    total_ms = last_end_ms if last_end_ms > 0 else max(1400, est_ms)
+    # Edge TTS MP3 is ~48kbps (~6000 bytes/s); keep duration aligned with actual playback so OLED text matches voice
+    bps = 6200.0 if tts_source == "edge" else 4400.0
+    est_ms = int((len(audio_chunks) / bps) * 1000) if audio_chunks else 1800
+    total_ms = last_end_ms if last_end_ms > 0 else max(1100, est_ms)
     print(f"TTS [{tts_source}] rate={rate} bytes={len(audio_chunks)} ms={total_ms}")
 
     now_t = time.time()
@@ -1070,10 +1070,10 @@ async def make_tts_with_duration(text: str, voice_code: str) -> Tuple[str, int]:
 
 
 def build_synced_pages(display_text: str, total_ms: int, lang: str) -> List[Dict]:
-    max_chars = 36 if lang == "AR" else 72
+    max_chars = 36 if lang == "AR" else 76
     txt = (display_text or "").strip()
     if not txt:
-        return [{"t": "...", "ms": max(1200, total_ms)}]
+        return [{"t": "...", "ms": max(1000, total_ms)}]
 
     raw_sents = [s.strip() for s in re.split(r"(?<=[.!?؟۔])\s+", txt) if s.strip()]
     chunks: List[str] = []
@@ -1095,15 +1095,15 @@ def build_synced_pages(display_text: str, total_ms: int, lang: str) -> List[Dict
             if cur:
                 chunks.append(cur)
 
-    chunks = chunks[:28]
+    chunks = chunks[:16]
     if not chunks:
         chunks = [txt[:max_chars]]
 
-    weights = [max(5, len(c)) for c in chunks]
+    weights = [max(4, len(c)) for c in chunks]
     w_sum = sum(weights)
     pages: List[Dict] = []
     for c, w in zip(chunks, weights):
-        ms = max(850, int(round(total_ms * (w / w_sum))))
+        ms = max(650, int(round(total_ms * (w / w_sum))))
         pages.append({"t": c, "ms": ms})
     return pages
 
@@ -1159,7 +1159,7 @@ async def generate_answer(heard: str, lang: str) -> Tuple[str, str, str]:
                 "Report ONLY facts from the live cricket headlines below in 3 to 4 complete sentences."
             )
             usr_p = f"User question: {heard}\nLive Cricket Feeds:\n" + "\n".join(f"- {h}" for h in headlines)
-            res = await call_groq_bilingual(sys_p, usr_p, lang, max_tokens=550)
+            res = await call_groq_bilingual(sys_p, usr_p, lang, max_tokens=500)
             if res:
                 return "CRICKET", res[0], res[1]
             fb = clean_ascii(". ".join(headlines[:2]))[:260]
@@ -1173,7 +1173,7 @@ async def generate_answer(heard: str, lang: str) -> Tuple[str, str, str]:
                 "Summarize the most relevant live headlines below clearly in 3 to 4 complete sentences."
             )
             usr_p = f"User asked: {heard}\nLive Headlines:\n" + "\n".join(f"- {h}" for h in headlines)
-            res = await call_groq_bilingual(sys_p, usr_p, lang, max_tokens=600)
+            res = await call_groq_bilingual(sys_p, usr_p, lang, max_tokens=550)
             if res:
                 return "NEWS", res[0], res[1]
             fb = clean_ascii(". ".join(headlines[:2]))[:260]
@@ -1182,11 +1182,11 @@ async def generate_answer(heard: str, lang: str) -> Tuple[str, str, str]:
     sys_p = (
         f"You are an accurate, factual male voice assistant based in Srinagar, Kashmir. "
         f"Today is {now.strftime('%A, %d %B %Y, %I:%M %p IST')} (Hijri: {hijri_en}). "
-        "Give direct, accurate, well-structured answers across education, philosophy, science, history, geography, technology, and Islamic topics. "
-        "When the user asks a follow-up like 'What are its types?' or 'Explain more', use the Previous Conversation Memory to answer about the exact subject discussed in the previous turn. "
-        "Keep answers clear, accurate, and complete without cutting off."
+        "Give direct, accurate, clear answers across education, philosophy, science, history, geography, technology, and Islamic topics. "
+        "When the user asks a follow-up like 'What are its types?' or 'Explain more', use Full Conversation Memory to answer about the exact subject from the previous turn. "
+        "Keep answers clear, accurate, and complete in 3 to 5 sentences."
     )
-    res = await call_groq_bilingual(sys_p, heard, lang, max_tokens=1100)
+    res = await call_groq_bilingual(sys_p, heard, lang, max_tokens=650)
     if res:
         return "ANSWER", res[0], res[1]
 
