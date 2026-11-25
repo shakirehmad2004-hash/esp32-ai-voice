@@ -28,13 +28,20 @@ RAW_KEYS = [
     if k.strip()
 ]
 
-# Fast + accurate fallback chain
-GROQ_MODELS = [
+# Backup list used only if live model discovery fails
+FALLBACK_GROQ_MODELS = [
     "llama-3.3-70b-versatile",
-    "llama-3.1-8b-instant",
+    "meta-llama/llama-4-maverick-17b-128e-instruct",
     "meta-llama/llama-4-scout-17b-16e-instruct",
+    "openai/gpt-oss-120b",
+    "openai/gpt-oss-20b",
     "qwen/qwen3-32b",
+    "llama-3.1-8b-instant",
+    "gemma2-9b-it",
 ]
+
+# Cache of auto-discovered live Groq chat models per API key
+MODEL_CACHE: Dict[str, Tuple[float, List[str]]] = {}
 
 STATE = {
     "voice": "UR-M",
@@ -292,9 +299,9 @@ def is_tafseer_intent(text: str) -> bool:
     keywords = [
         "tafseer", "tafsir", "tafsīr", "tafser", "tapsir", "tasfir", "tabseer", "takseer", "taseer",
         "tarjuma", "tarjama", "translation", "meaning", "mafhoom", "matlab", "explain", "sharah",
-        "ayat", "aayat", "ayah", "verse", "ayatul kursi", "ayat ul kursi",
+        "samjhao", "samjhaiye", "ayat", "aayat", "ayah", "verse", "ayatul kursi", "ayat ul kursi",
         "تفسیر", "تفسير", "تفصیر", "تبصیر", "تقصیر", "ترجمہ", "ترجمة", "آیت", "آیات", "آية",
-        "معنی", "معنى", "مطلب", "شرح", "آیت الکرسی", "آية الكرسي",
+        "معنی", "معنى", "مطلب", "شرح", "وضاحت", "تشریح", "سمجھاؤ", "آیت الکرسی", "آية الكرسي",
         "तफसीर", "तफ़सीर", "तफ्सीर", "तर्जुमा", "तरजुमा", "आयत", "आयात", "मतलब", "अर्थ", "व्याख्या",
     ]
     if any(k in low for k in keywords):
@@ -313,21 +320,20 @@ def detect_language(text: str) -> str:
     if any(w in low for w in ["urdu mein", "in urdu", "hindi mein", "اردو میں"]):
         return "UR"
 
-    # Devanagari -> Urdu/Hindi mode (Roman Urdu OLED + Urdu voice)
     if re.search(r"[\u0900-\u097F]", text):
         return "UR"
 
-    # Urdu-specific Perso-Arabic letters
     if re.search(r"[\u0679\u0688\u0691\u06BA\u06D2\u06C1\u06BE\u06AF\u067E\u0686\u0698\u06CC]", text):
         return "UR"
 
     urdu_markers = {
         "کے", "کا", "کی", "میں", "ہے", "ہیں", "تھا", "بتاؤ", "بتائیں", "سناؤ", "سنائیں",
         "کیا", "کیسے", "آج", "کل", "کون", "کہاں", "نماز", "موسم", "خبریں", "تفسیر", "پہلی",
+        "ٹائم", "ابھی", "ہوا", "بجے",
         "kya", "hai", "hain", "he", "batao", "bataiye", "sunao", "sunawo", "kaise", "aaj",
         "namaz", "mausam", "khabar", "khabrein", "khabrai", "tafseer", "tafsir", "tarjuma",
         "pehli", "pehlay", "pehle", "aayat", "ayat", "surah", "kaun", "kahan", "kitna",
-        "band", "chalu", "dikhao", "ruko", "awaaz", "karo", "mera", "mujhe", "hum", "aap", "ki", "ka", "ke",
+        "band", "chalu", "dikhao", "ruko", "awaaz", "karo", "kero", "mera", "mujhe", "hum", "aap", "ki", "ka", "ke",
     }
     tokens = re.findall(r"[\w\u0600-\u06FF]+", low)
     if any(tok in urdu_markers for tok in tokens):
@@ -406,7 +412,7 @@ def parse_quran_request(text: str) -> Tuple[Optional[int], Optional[int], Option
         return 2, 285, 286, False
 
     surah_num = None
-    m_surah = re.search(r"(?:surah|sura|سوره|سورہ|سورة|सूरह)\s*(?:number|no|نمبر)?\s*(\d{1,3})", low)
+    m_surah = re.search(r"(?:surah|sura|سوره|سورہ|سورة|सूरह)\s*(?:number|no\.?|نمبر)?\s*(\d{1,3})", low)
     if m_surah:
         surah_num = max(1, min(114, int(m_surah.group(1))))
     else:
@@ -447,7 +453,7 @@ def parse_quran_request(text: str) -> Tuple[Optional[int], Optional[int], Option
         e_ay = max(s_ay, min(s_ay + 9, int(m_range.group(2))))
         return surah_num, s_ay, e_ay, False
 
-    m_single = re.search(r"(?:ayat|aayat|ayah|verse|آیت|آية|आयत)\s*(?:number|no|نمبر)?\s*(\d{1,3})", norm)
+    m_single = re.search(r"(?:ayat|aayat|ayah|verse|آیت|آية|आयत)\s*(?:number|no\.?|نمبر)?\s*(\d{1,3})", norm)
     if m_single:
         a = max(1, int(m_single.group(1)))
         return surah_num, a, a, False
@@ -463,7 +469,6 @@ def parse_quran_request(text: str) -> Tuple[Optional[int], Optional[int], Option
 async def fetch_quran_verses(
     surah_num: int, start_ay: Optional[int], end_ay: Optional[int], is_last: bool
 ) -> Tuple[str, int, str, str]:
-    """Returns (surah_name, total_ayahs, verse_block, ur_plain_fallback)."""
     url = f"https://api.alquran.cloud/v1/surah/{surah_num}/editions/quran-uthmani,ur.jalandhry,en.sahih"
     try:
         async with httpx.AsyncClient(timeout=12.0) as client:
@@ -476,7 +481,6 @@ async def fetch_quran_verses(
             ar_ed, ur_ed, en_ed = editions[0], editions[1], editions[2]
             s_name = ar_ed.get("englishName") or f"Surah {surah_num}"
             total = ar_ed.get("numberOfAyahs", 0)
-            ar_list = ar_ed.get("ayahs", [])
             ur_list = ur_ed.get("ayahs", [])
             en_list = en_ed.get("ayahs", [])
 
@@ -494,7 +498,6 @@ async def fetch_quran_verses(
             ur_fallback_parts = []
             for idx in range(s_idx, e_idx):
                 anum = idx + 1
-                ar_t = ar_list[idx].get("text", "") if idx < len(ar_list) else ""
                 ur_t = ur_list[idx].get("text", "") if idx < len(ur_list) else ""
                 en_t = en_list[idx].get("text", "") if idx < len(en_list) else ""
                 lines.append(f"Ayah {anum} | UR: {ur_t} | EN: {en_t}")
@@ -593,8 +596,68 @@ async def fetch_weather_info(query: str) -> Tuple[str, Optional[float], Optional
     return place, None, None
 
 
+def _rank_groq_model(mid: str) -> int:
+    m = mid.lower()
+    if "70b" in m and "versatile" in m:
+        return 1
+    if "120b" in m:
+        return 2
+    if "maverick" in m:
+        return 3
+    if "70b" in m:
+        return 4
+    if "kimi" in m or "compound" in m:
+        return 5
+    if "qwen" in m:
+        return 6
+    if "scout" in m:
+        return 7
+    if "20b" in m or "32b" in m:
+        return 8
+    if "llama" in m:
+        return 9
+    return 15
+
+
+async def get_available_groq_models(key: str) -> List[str]:
+    """Auto-discover active chat models on this Groq key (prevents 404 model_not_found)."""
+    now_t = time.time()
+    cached = MODEL_CACHE.get(key)
+    if cached and (now_t - cached[0]) < 600:
+        return cached[1]
+
+    skip_tokens = ("whisper", "tts", "orpheus", "playai", "guard", "safeguard", "moderation", "embedding", "speech", "audio")
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            r = await client.get(
+                "https://api.groq.com/openai/v1/models",
+                headers={"Authorization": f"Bearer {key}"},
+            )
+            if r.status_code == 200:
+                raw_list = r.json().get("data", [])
+                chat_models = []
+                for item in raw_list:
+                    mid = str(item.get("id") or "")
+                    if not mid:
+                        continue
+                    low = mid.lower()
+                    if any(tok in low for tok in skip_tokens):
+                        continue
+                    chat_models.append(mid)
+                chat_models.sort(key=_rank_groq_model)
+                print(f"Discovered Groq chat models ({len(chat_models)}): {chat_models[:8]}")
+                if chat_models:
+                    MODEL_CACHE[key] = (now_t, chat_models[:8])
+                    return chat_models[:8]
+            else:
+                print(f"Groq /models returned {r.status_code}: {r.text[:140]}")
+    except Exception as ex:
+        print(f"Groq /models error: {ex}")
+
+    return FALLBACK_GROQ_MODELS
+
+
 async def call_groq_bilingual(system_prompt: str, user_prompt: str, lang: str, max_tokens: int = 420) -> Optional[Tuple[str, str]]:
-    """Rock-solid plain-text DISPLAY:/VOICE: parser (zero JSON crashes)."""
     if not RAW_KEYS:
         print("ERROR: No GROQ_API_KEY configured!")
         return None
@@ -618,9 +681,10 @@ async def call_groq_bilingual(system_prompt: str, user_prompt: str, lang: str, m
     full_sys = system_prompt + "\n\n" + format_rule
 
     for key in RAW_KEYS:
-        for model in GROQ_MODELS:
+        models = await get_available_groq_models(key)
+        for model in models:
             try:
-                async with httpx.AsyncClient(timeout=12.0) as client:
+                async with httpx.AsyncClient(timeout=14.0) as client:
                     resp = await client.post(
                         "https://api.groq.com/openai/v1/chat/completions",
                         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
@@ -637,6 +701,7 @@ async def call_groq_bilingual(system_prompt: str, user_prompt: str, lang: str, m
                     if resp.status_code == 200:
                         raw = resp.json()["choices"][0]["message"]["content"].strip()
                         raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.S).strip()
+                        print(f"Groq OK [{model}]")
 
                         if lang == "UR":
                             m_disp = re.search(r"DISPLAY:\s*(.+?)(?=\nVOICE:|\Z)", raw, flags=re.S | re.I)
@@ -646,7 +711,6 @@ async def call_groq_bilingual(system_prompt: str, user_prompt: str, lang: str, m
                                 voice = re.sub(r"[*_#`~]+", "", m_voice.group(1)).strip()
                                 if disp and voice:
                                     return disp, voice
-                            # Clean fallback if model replied without tags
                             disp_fb = clean_ascii(raw)
                             if disp_fb:
                                 return disp_fb, raw
@@ -682,7 +746,6 @@ async def wiki_fallback(query: str) -> Tuple[str, str]:
     headers = {"User-Agent": "ESP32VoiceAssistant/2.0"}
     try:
         async with httpx.AsyncClient(timeout=8.0, headers=headers) as client:
-            # First search Wikipedia for exact article title
             s_url = (
                 "https://en.wikipedia.org/w/api.php?action=query&list=search&srlimit=1&format=json&srsearch="
                 + urllib.parse.quote(clean_q[:80])
@@ -740,7 +803,6 @@ async def transcribe_wav(wav_bytes: bytes) -> str:
 
 
 async def fetch_google_tts_mp3(text: str, lang_code: str) -> bytes:
-    """Reliable chunked MP3 TTS fallback so speaker is NEVER silent."""
     tl = GTTS_LANG_MAP.get(lang_code, "ur")
     words = text.split()
     chunks: List[str] = []
@@ -783,7 +845,6 @@ async def make_tts_with_duration(text: str, voice_code: str) -> Tuple[str, int]:
     last_end_ms = 0
     tts_source = "edge"
 
-    # 1. Primary: Edge-TTS natural male voice
     try:
         comm = edge_tts.Communicate(clean_text, voice=voice, rate=rate)
         async for chunk in comm.stream():
@@ -797,7 +858,6 @@ async def make_tts_with_duration(text: str, voice_code: str) -> Tuple[str, int]:
     except Exception as ex:
         print(f"Edge-TTS error: {ex}")
 
-    # 2. Automatic backup if Edge-TTS failed or returned empty bytes
     if len(audio_chunks) < 800:
         tts_source = "google-fallback"
         print("Edge-TTS empty/blocked -> using Google TTS fallback")
@@ -808,13 +868,11 @@ async def make_tts_with_duration(text: str, voice_code: str) -> Tuple[str, int]:
     with open(out_path, "wb") as f:
         f.write(audio_chunks)
 
-    # Edge-TTS is ~6000 B/s (48kbps); Google TTS is ~4000 B/s (32kbps)
     bps = 6000.0 if tts_source == "edge" else 4000.0
     est_ms = int((len(audio_chunks) / bps) * 1000) if audio_chunks else 2500
     total_ms = max(last_end_ms, est_ms, 1500)
     print(f"TTS [{tts_source}] bytes={len(audio_chunks)} ms={total_ms}")
 
-    # Cleanup old audio files
     now_t = time.time()
     for fn in os.listdir(AUDIO_DIR):
         fp = os.path.join(AUDIO_DIR, fn)
@@ -876,8 +934,13 @@ async def generate_answer(heard: str, lang: str) -> Tuple[str, str, str]:
         disp, tts = build_namaz_response(lang)
         return "NAMAZ", disp, tts
 
-    # 2. Time / Date / Hijri
-    if any(w in low for w in ["time", "waqt", "baj", "baje", "date", "tareekh", "tarikh", "hijri", "وقت", "تاریخ", "ہجری", "التاريخ", "الساعة", "वक्त", "तारीख"]) and not any(w in low for w in ["namaz", "match", "cricket"]):
+    # 2. Time / Date / Hijri (including Urdu ٹائم / بجے and Hindi टाइम / बजे)
+    time_words = [
+        "time", "waqt", "baj", "baje", "date", "tareekh", "tarikh", "hijri",
+        "وقت", "ٹائم", "ٹایم", "بجے", "بجا", "تاریخ", "ہجری",
+        "التاريخ", "الساعة", "वक्त", "टाइम", "बजे", "बजा", "तारीख",
+    ]
+    if any(w in low for w in time_words) and not any(w in low for w in ["namaz", "نماز", "match", "cricket"]):
         t_str = now.strftime("%I:%M %p").lstrip("0")
         d_str = now.strftime("%A, %d %B %Y")
         if lang == "AR":
@@ -980,9 +1043,10 @@ async def root():
     }
 
 
-@app.get("/audio/{fid}.mp3")
 @app.get("/audio/{fid}")
 async def get_audio(fid: str):
+    if fid.endswith(".mp3"):
+        fid = fid[:-4]
     safe_id = re.sub(r"[^a-zA-Z0-9]", "", fid)
     fp = os.path.join(AUDIO_DIR, f"{safe_id}.mp3")
     if os.path.exists(fp) and os.path.getsize(fp) > 200:
