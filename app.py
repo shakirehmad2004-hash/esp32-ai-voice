@@ -19,6 +19,10 @@ os.makedirs(AUDIO_DIR, exist_ok=True)
 HISTORY_FILE = "/tmp/chat_history.json"
 MAX_HISTORY = 30
 
+ARCHIVE_URDU_ID = "Al_Quran_with_Urdu_Translation-Reciter_Mishary_bin_Rashid_al-Afasy-Voice_Shamsha"
+QURANURDU_MISHARI_PAGE = "https://www.quranurdu.com/quran_mishari/"
+HUMAN_URDU_CACHE: Dict[int, str] = {}
+
 RAW_KEYS = [
     k.strip()
     for k in (
@@ -337,10 +341,29 @@ def clean_ascii(text: str) -> str:
 
 def clean_arabic_display(text: str) -> str:
     s = re.sub(r"<think>.*?</think>", "", text or "", flags=re.S)
-    s = re.sub(r"[\u064B-\u065F\u0670\u0640]", "", s)
+    s = re.sub(r"[\u064B-\u065F\u0670\u06D6-\u06ED\u0640]", "", s)
     s = re.sub(r"[*_#`~\"']+", "", s)
     s = re.sub(r"\s+", " ", s).strip()
     return s
+
+
+def clean_urdu_for_tts(text: str) -> str:
+    """Normalizes Arabic-script Quran/Jalandhry text so Urdu Edge-TTS pronounces Allah & Surah names cleanly."""
+    s = re.sub(r"[\u064B-\u065F\u0670\u06D6-\u06ED\u0640]", "", text or "")
+    s = s.replace("\u0671", "ا").replace("أ", "ا").replace("إ", "ا").replace("آ", "آ")
+    s = s.replace("الله", "اللہ").replace("لله", "للہ")
+    s = s.replace("(", " ").replace(")", " ")
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def clean_surah_name_urdu(s_name_ar: str, surah_num: int) -> str:
+    s = clean_urdu_for_tts(s_name_ar)
+    s = re.sub(r"^(?:سورة|سورہ)\s+", "", s).strip()
+    s = s.replace("ة", "ہ")
+    if s:
+        return f"سورہ {s}"
+    return f"سورہ نمبر {surah_num}"
 
 
 def clean_voice_script(text: str) -> str:
@@ -390,23 +413,37 @@ def is_follow_up_ayah_request(text: str) -> bool:
     ])
 
 
+def is_translation_request(text: str) -> bool:
+    low = (text or "").lower()
+    return any(k in low for k in [
+        "tarjuma", "tarjama", "translation", "translate", "urdu mein", "urdu translation",
+        "ترجمہ", "ترجمة", "اردو ترجمہ", "तर्जुमा", "तरजुमा",
+    ])
+
+
+def is_tafseer_only_request(text: str) -> bool:
+    low = (text or "").lower()
+    if any(k in low for k in [
+        "tafseer", "tafsir", "tafsīr", "tafser", "tapsir", "tasfir", "tabseer",
+        "sharah", "samjhao", "samjhaiye", "nazool", "nuzool", "shaan", "halaat",
+        "تفسیر", "تفسير", "شرح", "وضاحت", "نزول", "شان", "حالات",
+        "तफसीर", "तफ़सीर", "तफ्सीर", "व्याख्या",
+    ]):
+        return True
+    return bool(re.search(r"taf[sz]e*r|tap[sz]i*r|tab[sz]e*r|nuz[ou]+l", low))
+
+
 def is_tafseer_intent(text: str) -> bool:
     low = (text or "").lower()
+    if is_translation_request(low) or is_tafseer_only_request(low):
+        return True
     keywords = [
-        "tafseer", "tafsir", "tafsīr", "tafser", "tapsir", "tasfir", "tabseer", "takseer", "taseer",
-        "tafsiersonal", "psiersonal", "tarjuma", "tarjama", "translation", "meaning", "mafhoom",
-        "matlab", "explain", "sharah", "samjhao", "samjhaiye", "ayat", "aayat", "ayah", "verse",
-        "ayatul kursi", "ayat ul kursi", "nazool", "nuzool", "shaan", "halaat", "makki", "madani",
-        "تفسیر", "تفسير", "تفصیر", "تبصیر", "تقصیر", "ترجمہ", "ترجمة", "آیت", "آیات", "آية",
-        "معنی", "معنى", "مطلب", "شرح", "وضاحت", "تشریح", "سمجھاؤ", "نزول", "شان", "حالات", "مکی", "مدنی",
-        "آیت الکرسی", "آية الكرسي",
-        "तफसीर", "तफ़सीर", "तफ्सीर", "तर्जुमा", "तरजुमा", "आयत", "आयात", "मतलब", "अर्थ", "व्याख्या",
+        "meaning", "mafhoom", "matlab", "explain", "ayat", "aayat", "ayah", "verse",
+        "ayatul kursi", "ayat ul kursi", "makki", "madani",
+        "آیت", "آیات", "آية", "معنی", "معنى", "مطلب", "آیت الکرسی", "آية الكرسي",
+        "आयत", "आयात", "मतलब", "अर्थ",
     ]
-    if any(k in low for k in keywords):
-        return True
-    if re.search(r"taf[sz]e*r|tap[sz]i*r|tab[sz]e*r|tarj[au]m|nuz[ou]+l|shaan", low):
-        return True
-    return False
+    return any(k in low for k in keywords)
 
 
 def detect_language(text: str) -> str:
@@ -578,6 +615,92 @@ def parse_quran_request(text: str) -> Tuple[Optional[int], Optional[int], Option
     return surah_num, None, None, False
 
 
+def _encode_url_path(url: str) -> str:
+    parts = urllib.parse.urlsplit(url)
+    encoded_path = urllib.parse.quote(urllib.parse.unquote(parts.path), safe="/:@-._~!$&'()*+,;=")
+    return urllib.parse.urlunsplit((parts.scheme, parts.netloc, encoded_path, parts.query, parts.fragment))
+
+
+async def fetch_human_urdu_translation_url(surah_num: int) -> Optional[str]:
+    """Fetches real human MP3 URL (Mishary Alafasy + Shamshad Ali Khan Urdu translation) from Archive.org or QuranUrdu."""
+    if surah_num in HUMAN_URDU_CACHE:
+        return HUMAN_URDU_CACHE[surah_num]
+
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; ESP32Assistant/2.0)"}
+    pat_num = re.compile(rf"^0*{surah_num}(?!\d)")
+
+    # 1) Try Internet Archive metadata API (Shamshad Ali Khan + Mishary Alafasy)
+    try:
+        meta_url = f"https://archive.org/metadata/{ARCHIVE_URDU_ID}"
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True, headers=headers) as client:
+            r = await client.get(meta_url)
+            if r.status_code == 200:
+                files = r.json().get("files", [])
+                mp3_candidates: List[str] = []
+                m3u_candidates: List[str] = []
+                for f in files:
+                    fname = str(f.get("name") or "")
+                    low_fn = fname.lower()
+                    if low_fn.endswith(".mp3"):
+                        mp3_candidates.append(fname)
+                    elif low_fn.endswith(".m3u"):
+                        m3u_candidates.append(fname)
+
+                for fname in mp3_candidates:
+                    base = os.path.basename(fname)
+                    if pat_num.match(base):
+                        direct = f"https://archive.org/download/{ARCHIVE_URDU_ID}/{urllib.parse.quote(fname, safe='/')}"
+                        HUMAN_URDU_CACHE[surah_num] = direct
+                        print(f"Human Urdu MP3 (Archive): {direct}")
+                        return direct
+
+                # External-links Archive items often list MP3 links inside .m3u
+                for m3u_name in m3u_candidates:
+                    m3u_url = f"https://archive.org/download/{ARCHIVE_URDU_ID}/{urllib.parse.quote(m3u_name, safe='/')}"
+                    mr = await client.get(m3u_url)
+                    if mr.status_code == 200:
+                        links = [
+                            ln.strip() for ln in mr.text.splitlines()
+                            if ln.strip().lower().startswith("http") and ".mp3" in ln.lower()
+                        ]
+                        for ln in links:
+                            base = os.path.basename(urllib.parse.unquote(urllib.parse.urlsplit(ln).path))
+                            if pat_num.match(base):
+                                clean_u = _encode_url_path(ln)
+                                HUMAN_URDU_CACHE[surah_num] = clean_u
+                                print(f"Human Urdu MP3 (Archive M3U): {clean_u}")
+                                return clean_u
+                        if len(links) >= 114:
+                            clean_u = _encode_url_path(links[surah_num - 1])
+                            HUMAN_URDU_CACHE[surah_num] = clean_u
+                            print(f"Human Urdu MP3 (Archive M3U idx): {clean_u}")
+                            return clean_u
+    except Exception as ex:
+        print(f"Archive lookup error: {ex}")
+
+    # 2) Fallback: QuranUrdu Mishary + Urdu translation directory
+    try:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True, headers=headers) as client:
+            r = await client.get(QURANURDU_MISHARI_PAGE)
+            if r.status_code == 200:
+                hrefs = re.findall(r'href=["\']([^"\']+\.mp3)["\']', r.text, flags=re.I)
+                matched: List[str] = []
+                for h in hrefs:
+                    base = os.path.basename(urllib.parse.unquote(h))
+                    if pat_num.match(base):
+                        matched.append(h)
+                if matched:
+                    matched.sort(key=lambda x: (0 if "(1)" in x else 1, len(x)))
+                    full_u = _encode_url_path(urllib.parse.urljoin(QURANURDU_MISHARI_PAGE, matched[0]))
+                    HUMAN_URDU_CACHE[surah_num] = full_u
+                    print(f"Human Urdu MP3 (QuranUrdu): {full_u}")
+                    return full_u
+    except Exception as ex:
+        print(f"QuranUrdu lookup error: {ex}")
+
+    return None
+
+
 async def fetch_quran_verses(
     surah_num: int, start_ay: Optional[int], end_ay: Optional[int], is_last: bool
 ) -> Tuple[str, str, int, List[Tuple[int, str, str, str]], Optional[int]]:
@@ -624,9 +747,10 @@ async def fetch_quran_verses(
         return "", "", 0, [], None
 
 
-async def build_alquran_exact_ayah_audio(
+async def build_clean_tafseer_audio(
     surah_num: int, start_ay: Optional[int], end_ay: Optional[int], is_last: bool, lang: str
 ) -> Tuple[str, str, str, Optional[int]]:
+    """Builds clean Urdu/English/Arabic translation + authentic classical Tafseer with fixed Urdu pronunciation."""
     s_name_en, s_name_ar, total_ay, ayahs, actual_last_ayah = await fetch_quran_verses(
         surah_num, start_ay, end_ay, is_last
     )
@@ -638,35 +762,59 @@ async def build_alquran_exact_ayah_audio(
     rev_type = "Madani" if surah_num in MADANI_SURAHS else "Makki"
     first_a = ayahs[0][0]
     last_a = ayahs[-1][0]
+    surah_ur = clean_surah_name_urdu(s_name_ar, surah_num)
+    rev_ur = "مدنی" if rev_type == "Madani" else "مکی"
 
-    if lang == "EN":
-        parts = [f"{s_name_en}, Surah {surah_num}, {rev_type}, total {total_ay} verses."]
-        for anum, _, _, en_t in ayahs:
-            parts.append(f"Verse {anum}: {en_t}")
+    if lang == "UR":
+        cleaned_verses = [(anum, clean_urdu_for_tts(ur_t)) for anum, _, ur_t, _ in ayahs]
+        verse_block = "\n".join(f"آیت {anum}: {ut}" for anum, ut in cleaned_verses)
+        tafseer_part = ""
+        sys_p = (
+            "You are a classical Sunni Islamic scholar giving authentic, clear Tafseer (like Ma'ariful Quran / Tafseer-e-Usmani) in natural Urdu script (اردو). "
+            "Write ONLY the Tafseer and nazool/background explanation in 4 to 6 clear sentences. "
+            "Do NOT repeat the word-for-word translation, do NOT use Arabic harakat, write اللہ with Urdu ہ, and never use DISPLAY or VOICE labels."
+        )
+        usr_p = (
+            f"Surah {surah_num} ({s_name_en}), {rev_type}, Ayahs {first_a} to {last_a}:\n{verse_block}\n"
+            "Explain the background (shan-e-nuzool) and clear Tafseer of these verses in Urdu."
+        )
+        res = await call_groq_bilingual(sys_p, usr_p, "UR", "normal")
+        if res and res[1]:
+            tafseer_part = clean_urdu_for_tts(res[1])
+
+        if last_a > first_a:
+            intro = f"{surah_ur}، سورہ نمبر {surah_num}، {rev_ur}، کل آیات {total_ay}۔ آیت {first_a} سے {last_a} تک ترجمہ اور تفسیر سماعت فرمائیں۔"
+        else:
+            intro = f"{surah_ur}، سورہ نمبر {surah_num}، {rev_ur}، کل آیات {total_ay}۔ آیت {first_a} کا ترجمہ اور تفسیر سماعت فرمائیں۔"
+
+        parts = [intro]
+        for anum, ut in cleaned_verses:
+            parts.append(f"آیت {anum}۔ {ut}۔")
+        if tafseer_part:
+            parts.append(f"تفسیر۔ {tafseer_part}")
+
         script = " ".join(parts)
-        url, _ = await make_tts_with_duration(script, "EN-M")
+        url, _ = await make_tts_with_duration(script, "UR-M")
         return f"TAFSEER {surah_num}", url, script, actual_last_ayah
 
     if lang == "AR":
-        parts = [f"{s_name_ar}، السورة {surah_num}، عدد آياتها {total_ay}."]
+        parts = [f"{clean_arabic_display(s_name_ar)}، السورة {surah_num}، عدد آياتها {total_ay}."]
         for anum, ar_t, _, _ in ayahs:
             parts.append(f"الآية {anum}: {ar_t}")
         script = " ".join(parts)
         url, _ = await make_tts_with_duration(script, "AR-M")
         return f"TAFSEER {surah_num}", url, script, actual_last_ayah
 
-    rev_ur = "مدنی" if rev_type == "Madani" else "مکی"
-    if last_a > first_a:
-        intro = f"سورہ {s_name_ar}، نمبر {surah_num}، {rev_ur}، کل آیات {total_ay}۔ آیت {first_a} سے {last_a} تک ترجمہ سماعت فرمائیں۔"
-    else:
-        intro = f"سورہ {s_name_ar}، نمبر {surah_num}، {rev_ur}، کل آیات {total_ay}۔ آیت {first_a} کا ترجمہ سماعت فرمائیں۔"
-
-    parts = [intro]
-    for anum, _, ur_t, _ in ayahs:
-        parts.append(f"آیت {anum}: {ur_t}")
-
+    parts = [f"{s_name_en}, Surah {surah_num}, {rev_type}, total {total_ay} verses."]
+    for anum, _, _, en_t in ayahs:
+        parts.append(f"Verse {anum}: {en_t}")
+    sys_p = "You are an Islamic scholar. Give a clear, authentic 4-sentence Tafseer and revelation context in simple English."
+    usr_p = f"Surah {surah_num} ({s_name_en}), Verses {first_a} to {last_a}."
+    res = await call_groq_bilingual(sys_p, usr_p, "EN", "normal")
+    if res and res[1]:
+        parts.append(f"Tafseer: {res[1]}")
     script = " ".join(parts)
-    url, _ = await make_tts_with_duration(script, "UR-M")
+    url, _ = await make_tts_with_duration(script, "EN-M")
     return f"TAFSEER {surah_num}", url, script, actual_last_ayah
 
 
@@ -951,7 +1099,7 @@ async def wiki_fallback(query: str) -> Tuple[str, str]:
 async def transcribe_wav(wav_bytes: bytes) -> str:
     if not RAW_KEYS:
         return ""
-    hint_prompt = "Surah Baqarah aayat 180 se 185 ka tarjuma sunao, Educational philosophy kya hai, Python, History, Science, Brief mein batao, Tafseel se batao."
+    hint_prompt = "Surah Ikhlas ka tarjuma sunao, Surah Ikhlas ki tafseer sunao, Surah Baqarah aayat 180 se 185 ka tarjuma sunao, Educational philosophy kya hai, Brief mein batao, Tafseel se batao."
     for key in RAW_KEYS:
         try:
             async with httpx.AsyncClient(timeout=18.0) as client:
@@ -1019,6 +1167,8 @@ async def make_tts_with_duration(text: str, voice_code: str) -> Tuple[str, int]:
     else:
         rate = SPEED_MAP.get(STATE["speed"], "+0%")
     clean_text = clean_voice_script(text) or "جی بتائیے۔"
+    if voice_code == "UR-M":
+        clean_text = clean_urdu_for_tts(clean_text)
 
     audio_chunks = bytearray()
     last_end_ms = 0
@@ -1364,8 +1514,31 @@ async def chat(request: Request):
         "سورہ", "سورة", "قرآن", "تلاوت", "सूरह", "कुरान"
     ])
 
+    # 1) Full-Surah Urdu Translation -> Real Human Audio MP3 (Mishary + Shamshad Ali Khan)
+    if (
+        s_num is not None
+        and s_ay is None
+        and not is_follow_up_ayah_request(heard)
+        and is_translation_request(heard)
+        and not is_tafseer_only_request(heard)
+    ):
+        human_mp3 = await fetch_human_urdu_translation_url(s_num)
+        if human_mp3:
+            append_history({"u": heard, "a": f"Played Urdu translation MP3 for Surah {s_num}", "surah_num": s_num, "last_ayah": None})
+            return {
+                "action": "STREAM",
+                "lang": "UR",
+                "header": f"URDU {s_num:03d}",
+                "title": f"URDU {s_num:03d}",
+                "url": human_mp3,
+                "voice": voice_code,
+                "volume": STATE["volume"],
+                "monster": STATE["monster"],
+            }
+
+    # 2) Specific Ayah/Range or Tafseer -> Clean Urdu translation + authentic Tafseer
     if s_num is not None and (is_tafseer_intent(heard) or is_follow_up_ayah_request(heard) or any(w in low for w in detail_words)):
-        hdr_title, audio_rel, summary_txt, actual_last_ay = await build_alquran_exact_ayah_audio(
+        hdr_title, audio_rel, summary_txt, actual_last_ay = await build_clean_tafseer_audio(
             s_num, s_ay, e_ay, is_last, lang
         )
         append_history({
@@ -1386,6 +1559,7 @@ async def chat(request: Request):
             "monster": STATE["monster"],
         }
 
+    # 3) Direct Tilawat -> Mishary Rashid Alafasy MP3
     if is_quran_play:
         num = s_num or 1
         append_history({"u": heard, "a": f"Played Surah {num}", "surah_num": num, "last_ayah": None})
