@@ -18,6 +18,7 @@ AUDIO_DIR = "/tmp/tts_audio"
 os.makedirs(AUDIO_DIR, exist_ok=True)
 HISTORY_FILE = "/tmp/chat_history.json"
 MAX_HISTORY = 30
+AUDIO_TTL_SEC = 900
 
 # Verified Real Human Voice Audio Sources (All 114 Surahs)
 ARCHIVE_TAFHEEM_FULL_ID = "Tafheem-ul-Quran-by-Syed-Abul-Ala-Moududi-Audio-MP3-CD"
@@ -26,8 +27,8 @@ ARCHIVE_SHAMSHAD_ID = "Al_Quran_with_Urdu_Translation-Reciter_Mishary_bin_Rashid
 QURANURDU_MISHARI_PAGE = "https://www.quranurdu.com/quran_mishari/"
 
 ARCHIVE_MAP_CACHE: Dict[str, Dict[int, str]] = {}
-QURANURDU_MAP_CACHE: Dict[int, str] = {}
-RESOLVED_URL_CACHE: Dict[str, str] = {}
+QURANURDU_MAP_CACHE: Dict[int, Dict[int, str]] = {}
+RESOLVED_URL_CACHE: Dict[str, Tuple[float, str]] = {}
 
 RAW_KEYS = [
     k.strip()
@@ -54,11 +55,12 @@ MODEL_CACHE: Dict[str, Tuple[float, List[str]]] = {}
 STATE = {
     "voice": "UR-M",
     "speed": "Norm",
-    "volume": 12,
+    "volume": 11,
+    "last_nonzero_volume": 11,
     "monster": False,
 }
 
-# Consistent, clear voices: Urdu (Asad), Clear Indian English (Prabhat), Arabic (Hamed)
+# Clean, natural voices: Urdu (Asad), Clear Indian English (Prabhat), Arabic (Hamed)
 VOICE_MAP = {
     "UR-M": "ur-PK-AsadNeural",
     "EN-M": "en-IN-PrabhatNeural",
@@ -74,7 +76,7 @@ GTTS_LANG_MAP = {
 SPEED_MAP = {
     "Slow": "-16%",
     "Norm": "+0%",
-    "Fast": "+10%",
+    "Fast": "+12%",
 }
 
 MEEQAT_ANCHORS = [
@@ -238,9 +240,10 @@ SURAH_NAMES: Dict[str, int] = {
 
 MADANI_SURAHS = {2, 3, 4, 5, 8, 9, 22, 24, 33, 47, 48, 49, 55, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 76, 98, 110}
 
+# Applied ONLY after Surah name/number & Part 1/2 are removed so 'Surah Teen' or 'Part 2' never collide
 NUMBER_WORDS = {
     "ek": 1, "aik": 1, "one": 1, "pehli": 1, "pehlay": 1, "pehle": 1, "first": 1, "ایک": 1, "پہلی": 1, "الأولى": 1, "पहली": 1,
-    "do": 2, "two": 2, "دو": 2, "اثنين": 2, "दो": 2,
+    "two": 2, "دو": 2, "اثنين": 2, "दो": 2,
     "teen": 3, "three": 3, "تین": 3, "ثلاث": 3, "तीन": 3,
     "chaar": 4, "char": 4, "four": 4, "چار": 4, "أربع": 4, "चार": 4,
     "paanch": 5, "panch": 5, "five": 5, "پانچ": 5, "خمس": 5, "पांच": 5, "पाँच": 5,
@@ -269,6 +272,67 @@ WHISPER_HALLUCINATIONS = {
     "subtitles by", "amara.org", "thank you for watching",
 }
 
+WEATHER_STOPWORDS = {
+    "aaj", "kal", "today", "tomorrow", "abhi", "now", "kaisa", "kaisi", "kaise",
+    "weather", "mausam", "mosam", "temperature", "temp", "forecast", "barish",
+    "baarish", "rain", "snow", "snowfall", "kya", "hai", "hogi", "hoga", "hain",
+    "cold", "hot", "sardi", "garmi", "thand", "dhoop", "yahan", "idhar", "here",
+    "outside", "bahar", "batao", "bataiye", "tell", "me", "the", "my", "area",
+    "right", "currently", "please", "sir", "bhai",
+}
+
+URDU_TO_ROMAN_MAP = {
+    "آ": "aa", "ا": "a", "أ": "a", "إ": "i", "ب": "b", "پ": "p", "ت": "t", "ٹ": "t",
+    "ث": "s", "ج": "j", "چ": "ch", "ح": "h", "خ": "kh", "د": "d", "ڈ": "d", "ذ": "z",
+    "ر": "r", "ڑ": "r", "ز": "z", "ژ": "zh", "س": "s", "ش": "sh", "ص": "s", "ض": "z",
+    "ط": "t", "ظ": "z", "ع": "a", "غ": "gh", "ف": "f", "ق": "q", "ک": "k", "ك": "k",
+    "گ": "g", "ل": "l", "م": "m", "ن": "n", "ں": "n", "و": "o", "ہ": "h", "ه": "h",
+    "ھ": "h", "ۃ": "t", "ة": "h", "ء": "", "ی": "i", "ي": "i", "ے": "e", "ئ": "i",
+    "۔": ".", "،": ",", "؟": "?", "؛": ";",
+}
+
+
+def normalize_digits(text: str) -> str:
+    """Converts Arabic-Indic, Urdu/Persian, and Devanagari digits into ASCII 0-9."""
+    if not text:
+        return ""
+    out = []
+    for ch in text:
+        o = ord(ch)
+        if 0x0660 <= o <= 0x0669:
+            out.append(chr(ord("0") + (o - 0x0660)))
+        elif 0x06F0 <= o <= 0x06F9:
+            out.append(chr(ord("0") + (o - 0x06F0)))
+        elif 0x0966 <= o <= 0x096F:
+            out.append(chr(ord("0") + (o - 0x0966)))
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def has_word(text: str, words: List[str]) -> bool:
+    """Whole-word / whole-phrase boundary check."""
+    low = (text or "").lower()
+    for w in words:
+        if re.search(rf"(?<!\w){re.escape(w.lower())}(?!\w)", low):
+            return True
+    return False
+
+
+def urdu_to_roman_fallback(text: str) -> str:
+    """Ensures OLED display is ALWAYS readable ASCII even if LLM skips DISPLAY line."""
+    s = normalize_digits(text or "")
+    s = re.sub(r"[\u064B-\u065F\u0670\u06D6-\u06ED\u0640]", "", s)
+    out = []
+    for ch in s:
+        if ch in URDU_TO_ROMAN_MAP:
+            out.append(URDU_TO_ROMAN_MAP[ch])
+        elif 32 <= ord(ch) <= 126:
+            out.append(ch)
+        else:
+            out.append(" ")
+    return re.sub(r"\s+", " ", "".join(out)).strip()[:320]
+
 
 def load_history() -> List[Dict]:
     if os.path.exists(HISTORY_FILE):
@@ -286,11 +350,26 @@ def append_history(entry: Dict) -> None:
     hist = load_history()
     hist.append(entry)
     hist = hist[-MAX_HISTORY:]
+    tmp_path = f"{HISTORY_FILE}.{uuid.uuid4().hex[:6]}.tmp"
     try:
-        with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+        with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(hist, f, ensure_ascii=False)
+        os.replace(tmp_path, HISTORY_FILE)
     except Exception as ex:
         print(f"History save error: {ex}")
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except Exception:
+            pass
+
+
+def clear_history() -> None:
+    try:
+        if os.path.exists(HISTORY_FILE):
+            os.remove(HISTORY_FILE)
+    except Exception as ex:
+        print(f"History clear error: {ex}")
 
 
 def get_ist_now() -> datetime.datetime:
@@ -356,19 +435,26 @@ def clean_arabic_display(text: str) -> str:
 
 
 def clean_urdu_for_tts(text: str) -> str:
-    """Normalizes Urdu/Arabic text so Edge-TTS pronounces Allah, Surah names, and Urdu cleanly."""
-    s = re.sub(r"[\u064B-\u065F\u0670\u06D6-\u06ED\u0640]", "", text or "")
+    """Normalizes Urdu script so Edge-TTS reads Allah, punctuation, and Urdu cleanly without footnote artifacts."""
+    s = re.sub(r"<think>.*?</think>", "", text or "", flags=re.S)
+    s = re.sub(r"\b(?:DISPLAY|VOICE)\s*:\s*", "", s, flags=re.I)
+    s = re.sub(r"[\(\[]\s*[\d\u0660-\u0669\u06F0-\u06F9]+\s*[\)\]]", "", s)
+    s = re.sub(r"[\u064B-\u065F\u0670\u06D6-\u06ED\u0640]", "", s)
     s = s.replace("\u0671", "ا").replace("أ", "ا").replace("إ", "ا")
     s = s.replace("الله", "اللہ").replace("لله", "للہ")
     s = s.replace("(", " ").replace(")", " ").replace("[", " ").replace("]", " ")
+    s = re.sub(r"[*_#`~•\"']+", "", s)
     s = re.sub(r"\s+", " ", s).strip()
     return s
 
 
 def clean_surah_name_urdu(s_name_ar: str, surah_num: int) -> str:
+    """Removes Arabic 'ال' prefix so Urdu TTS naturally says 'Surah Alaq', 'Surah Baqarah', 'Surah Ikhlas'."""
     s = clean_urdu_for_tts(s_name_ar)
-    s = re.sub(r"^(?:سورة|سورہ)\s+", "", s).strip()
-    s = s.replace("ة", "ہ")
+    s = re.sub(r"^(?:سورة|سورہ|سورۃ|سوره)\s+", "", s).strip()
+    s = s.replace("ة", "ہ").replace("ۃ", "ہ")
+    if s.startswith("ال") and len(s) > 3:
+        s = s[2:]
     if s:
         return f"سورہ {s}"
     return f"سورہ نمبر {surah_num}"
@@ -383,18 +469,27 @@ def clean_voice_script(text: str) -> str:
 
 
 def detect_length_mode(text: str) -> str:
-    low = (text or "").lower()
-    if any(w in low for w in [
+    if has_word(text, [
         "short", "brief", "briefly", "mukhtasar", "chhota", "chota", "kam lafzon",
         "in short", "one line", "two lines", "مختصر", "چھوٹا", "संक्षिप्त", "छोटा"
     ]):
         return "brief"
-    if any(w in low for w in [
+    if has_word(text, [
         "long", "detailed", "detail", "tafseel", "tafsil", "mukammal", "poora", "pura",
         "in depth", "deeply", "expand", "مفصل", "تفصیل", "مکمل", "विस्तार", "पूरा"
     ]):
         return "long"
     return "normal"
+
+
+def detect_part_num(text: str) -> int:
+    if has_word(text, [
+        "part 2", "part two", "part do", "second part",
+        "hissa 2", "hissa do", "doosra hissa", "dusra hissa",
+        "پارٹ 2", "حصہ 2", "دوسرا حصہ", "पार्ट 2", "दूसरा हिस्सा",
+    ]):
+        return 2
+    return 1
 
 
 def format_history_for_prompt() -> str:
@@ -411,9 +506,107 @@ def format_history_for_prompt() -> str:
     )
 
 
-def is_follow_up_ayah_request(text: str) -> bool:
+def is_namaz_query(text: str) -> bool:
+    """Checked BEFORE Quran routing so 'Fajr ka waqt' NEVER triggers Surah Fajr."""
+    if has_word(text, [
+        "namaz", "nimaz", "meeqat", "miqat", "prayer time", "prayer times",
+        "salah time", "salah times", "نماز", "صلاة", "اوقات نماز", "नमाज", "नमाज़",
+    ]):
+        return True
+    prayer_names = ["fajr", "fajar", "zohar", "zuhr", "dhuhr", "asr", "asar", "maghrib", "magrib", "esha", "isha", "فجر", "ظہر", "عصر", "مغرب", "عشاء"]
+    time_hints = ["time", "timing", "timings", "waqt", "kab", "kitne baje", "baje", "وقت", "ٹائم", "کب", "بجے", "वक्त", "कब", "बजे"]
+    if has_word(text, prayer_names) and has_word(text, time_hints) and not has_word(text, ["surah", "sura", "tafseer", "tafsir", "tarjuma", "ayat", "aayat", "سورہ", "سورۃ", "سورة", "تفسیر", "ترجمہ", "آیت"]):
+        return True
+    return False
+
+
+def is_time_or_date_query(text: str) -> bool:
+    if is_namaz_query(text):
+        return False
+    exclude = [
+        "time complexity", "space complexity", "part time", "full time", "first time",
+        "last time", "real time", "every time", "date of birth", "release date",
+        "exam date", "match", "cricket", "history", "update", "updated", "data",
+    ]
+    if has_word(text, exclude):
+        return False
+    if has_word(text, ["hijri", "ہجری", "التاريخ", "الساعة"]):
+        return True
+    clock_phrases = [
+        "what time", "what is the time", "current time", "tell me the time",
+        "time kya", "kya time", "waqt kya", "kya waqt", "kitna time", "kitna waqt",
+        "kitne baje", "kya baje", "abhi time", "abhi waqt",
+        "today date", "today's date", "what is the date", "what date", "what day is",
+        "aaj ki date", "aaj ki tareekh", "aaj ki tarikh", "aaj kya date", "aaj kya tareekh",
+        "aaj kaun sa din", "aaj kya din",
+        "ٹائم کیا", "وقت کیا", "کتنے بجے", "آج کی تاریخ", "آج کیا تاریخ", "آج کون سا دن",
+        "आज की तारीख", "कितने बजे", "टाइम क्या", "वक्त क्या",
+    ]
+    if has_word(text, clock_phrases):
+        return True
+    toks = re.findall(r"[\w\u0600-\u06FF\u0900-\u097F]+", (text or "").lower())
+    if len(toks) <= 4 and has_word(text, ["time", "waqt", "date", "tareekh", "tarikh", "baje", "وقت", "ٹائم", "تاریخ", "بجے", "तारीख", "टाइम"]):
+        return True
+    return False
+
+
+def is_weather_query(text: str) -> bool:
+    if has_word(text, ["temporary", "template", "attempt", "contempt"]):
+        return False
+    return has_word(text, [
+        "mausam", "mosam", "weather", "temperature", "forecast", "barish", "baarish",
+        "rain", "snowfall", "موسم", "بارش", "الطقس", "मौसम", "बारिश",
+    ])
+
+
+def is_cricket_query(text: str) -> bool:
+    if has_word(text, ["cricket", "ipl", "t20", "odi", "test match", "virat", "rohit", "babar", "psl", "bbl", "world cup", "asia cup", "wicket", "کرکٹ", "क्रिकेट"]):
+        return True
+    if has_word(text, ["score", "live score", "match", "میچ", "اسکور"]) and has_word(text, ["india", "pakistan", "australia", "england", "match", "live", "team", "series", "today", "aaj", "انڈیا", "پاکستان"]):
+        return True
+    return False
+
+
+def is_news_query(text: str) -> bool:
+    return has_word(text, [
+        "news", "khabar", "khabrein", "khabrai", "headlines", "taza khabar",
+        "breaking news", "latest news", "خبر", "خبریں", "أخبار", "खबर", "खबरें",
+    ])
+
+
+def has_explicit_quran_context(text: str) -> bool:
     low = (text or "").lower()
-    return any(p in low for p in [
+    if has_word(low, [
+        "surah", "sura", "sury", "suraj", "suratul", "quran", "quraan", "tilawat", "recite", "recitation",
+        "tafseer", "tafsir", "tafser", "tafheem", "tafhim", "maududi", "moududi", "modudi",
+        "tarjuma", "tarjama", "ayat", "aayat", "ayah", "verse", "verses",
+        "ayatul kursi", "ayat ul kursi", "ayat-ul-kursi", "amanar rasul", "amanar rasool",
+        "deebacha", "dibacha", "muqadma", "muqaddama",
+        "سورہ", "سورۃ", "سورة", "سوره", "قرآن", "تلاوت", "تفسیر", "تفسير", "تفہیم", "مودودی",
+        "ترجمہ", "ترجمة", "آیت", "آیات", "آية", "آیت الکرسی", "آية الكرسي", "دیباچہ", "مقدمہ",
+        "सूरह", "कुरान", "तफसीर", "तफ़सीर", "तफ्सीर", "तर्जुमा", "तरजुमा", "आयत", "आयात",
+    ]):
+        return True
+    return bool(re.search(r"\b(?:taf[sz]e*r|tap[sz]i*r|tafh[ie]+m|tarj[au]m)\w*", low))
+
+
+def is_quran_info_question(text: str) -> bool:
+    """True ONLY for factual trivia ABOUT the Quran (e.g. 'kitni surahein', 'kisne likhi'), NEVER for Surah/Ayah Tafseer or Tarjuma."""
+    low = (text or "").lower()
+    if has_word(low, ["sunao", "sunawo", "sunaiye", "play", "recite", "tilawat", "chala", "chalao", "lagao", "سناؤ", "سنائیں", "چلاؤ", "لگاؤ", "सुनाओ"]):
+        return False
+    if has_word(low, [
+        "kitni", "kitne", "kitna", "kisne", "kis ne", "kis par", "kab nazil", "kahan nazil",
+        "kaun si", "kaun sa", "who wrote", "how many", "when was", "total surah", "total ayat",
+        "longest surah", "shortest surah", "badi surah", "choti surah", "makki hai ya madani",
+        "کتنی", "کتنے", "کس نے", "کب نازل", "کہاں نازل", "کون سی", "कितनी", "कितने", "किसने",
+    ]):
+        return True
+    return False
+
+
+def is_follow_up_ayah_request(text: str) -> bool:
+    return has_word(text, [
         "is se aagay", "is se age", "is se agay", "is ke aagay", "is ke age",
         "agli aayat", "agla aayat", "agli ayat", "next ayah", "next ayat", "next verse",
         "isi surah", "isi sura", "usi surah", "usi sura",
@@ -422,64 +615,64 @@ def is_follow_up_ayah_request(text: str) -> bool:
 
 
 def is_translation_request(text: str) -> bool:
-    low = (text or "").lower()
-    return any(k in low for k in [
-        "tarjuma", "tarjama", "translation", "translate", "urdu mein", "urdu translation",
+    return has_word(text, [
+        "tarjuma", "tarjama", "translation", "translate", "urdu translation",
         "ترجمہ", "ترجمة", "اردو ترجمہ", "तर्जुमा", "तरजुमा",
     ])
 
 
 def is_tafseer_only_request(text: str) -> bool:
     low = (text or "").lower()
-    if any(k in low for k in [
+    if has_word(low, [
         "tafseer", "tafsir", "tafsīr", "tafser", "tapsir", "tasfir", "tabseer",
         "tafheem", "tafhim", "maududi", "moududi", "modudi",
-        "sharah", "samjhao", "samjhaiye", "nazool", "nuzool", "shaan", "halaat",
-        "تفسیر", "تفسير", "تفہیم", "مودودی", "شرح", "وضاحت", "نزول", "شان", "حالات",
-        "तफसीर", "तफ़सीर", "तफ्सीर", "तफहीम", "व्याख्या",
+        "sharah", "nazool", "nuzool", "shaan", "shan", "matlab", "meaning", "explain", "samjhao",
+        "تفسیر", "تفسير", "تفہیم", "مودودی", "شرح", "وضاحت", "نزول", "شان", "مطلب", "معنی",
+        "तफसीर", "तफ़सीर", "तफ्सीर", "तफहीम", "व्याख्या", "मतलब",
     ]):
         return True
-    return bool(re.search(r"taf[sz]e*r|tap[sz]i*r|tab[sz]e*r|tafh[ie]+m|nuz[ou]+l", low))
+    return bool(re.search(r"\b(?:taf[sz]e*r|tap[sz]i*r|tab[sz]e*r|tafh[ie]+m|nuz[ou]+l)\w*", low))
 
 
 def is_tafseer_intent(text: str) -> bool:
-    low = (text or "").lower()
-    if is_translation_request(low) or is_tafseer_only_request(low):
+    if is_translation_request(text) or is_tafseer_only_request(text):
         return True
-    keywords = [
-        "meaning", "mafhoom", "matlab", "explain", "ayat", "aayat", "ayah", "verse",
-        "ayatul kursi", "ayat ul kursi", "makki", "madani",
-        "آیت", "آیات", "آية", "معنی", "معنى", "مطلب", "آیت الکرسی", "آية الكرسي",
-        "आयत", "आयात", "मतलब", "अर्थ",
-    ]
-    return any(k in low for k in keywords)
+    return has_word(text, [
+        "ayat", "aayat", "ayah", "verse", "verses", "ayatul kursi", "ayat ul kursi",
+        "آیت", "آیات", "آية", "آیت الکرسی", "آية الكرسي", "आयत", "आयात",
+    ])
 
 
 def detect_language(text: str) -> str:
     low = (text or "").lower()
-    if any(w in low for w in ["english mein", "in english", "speak english", "انگریزی میں"]):
+    if has_word(low, ["english mein", "in english", "speak english", "انگریزی میں"]):
         return "EN"
-    if any(w in low for w in ["arabic mein", "arabi mein", "in arabic", "بالعربية", "عربی میں"]):
+    if has_word(low, ["arabic mein", "arabi mein", "in arabic", "بالعربية", "عربی میں"]):
         return "AR"
-    if any(w in low for w in ["urdu mein", "in urdu", "hindi mein", "اردو میں"]):
+    if has_word(low, ["urdu mein", "in urdu", "hindi mein", "اردو میں"]):
         return "UR"
 
     if re.search(r"[\u0900-\u097F]", text):
         return "UR"
 
-    if re.search(r"[\u0679\u0688\u0691\u06BA\u06D2\u06C1\u06BE\u06AF\u067E\u0686\u0698\u06CC]", text):
+    if re.search(r"[\u0679\u0688\u0691\u06BA\u06D2\u06C1\u06C3\u06BE\u06AF\u067E\u0686\u0698\u06CC]", text):
         return "UR"
 
+    # Strictly non-English Urdu/Roman-Urdu markers so English sentences never flip to Urdu
     urdu_markers = {
         "کے", "کا", "کی", "میں", "ہے", "ہیں", "تھا", "بتاؤ", "بتائیں", "سناؤ", "سنائیں",
         "کیا", "کیسے", "آج", "کل", "کون", "کہاں", "نماز", "موسم", "خبریں", "تفسیر", "پہلی",
         "ٹائم", "ٹانم", "ابھی", "ہوا", "بجے", "حالات", "نزول", "سے", "پچھلا", "اگلا", "آگے",
-        "kya", "hai", "hain", "he", "batao", "bataiye", "sunao", "sunawo", "sunahu", "kaise", "aaj",
-        "namaz", "mausam", "khabar", "khabrein", "khabrai", "tafseer", "tafsir", "tarjuma",
-        "pehli", "pehlay", "pehle", "aayat", "ayat", "surah", "sury", "suraj", "kaun", "kahan",
-        "kitna", "band", "chalu", "dikhao", "ruko", "awaaz", "karo", "kero", "mera", "mujhe",
-        "hum", "aap", "ki", "ka", "ke", "se", "say", "aagay", "age", "agay", "agli", "halaat",
-        "nazool", "nuzool",
+        "kya", "hai", "hain", "tha", "thi", "hota", "hoti", "hote", "hoga", "hogi",
+        "batao", "bataiye", "sunao", "sunawo", "sunahu", "samjhao", "samjhaiye",
+        "kaise", "kaisa", "kaisi", "aaj", "kal", "abhi", "kab", "kyun", "kyu", "kaun", "kahan",
+        "kitna", "kitni", "kitne", "kisne", "kisko", "kise", "nahi", "nhi", "aur", "lekin",
+        "mausam", "mosam", "khabar", "khabrein", "khabrai", "tarjuma", "tarjama",
+        "pehli", "pehlay", "pehle", "chalu", "dikhao", "ruko", "awaaz", "karo", "kero",
+        "mera", "meri", "mere", "mujhe", "aap", "tum", "ki", "ka", "ke", "se", "mein", "tak",
+        "aagay", "agay", "agli", "halaat", "nazool", "nuzool", "dheere", "ahista", "tez",
+        "bolo", "bhai", "yaar", "bahut", "thoda", "kuch", "sab", "sahi", "galat",
+        "wala", "wali", "wale", "hissa", "doosra", "dusra", "waqt", "tareekh", "tarikh",
     }
     tokens = re.findall(r"[\w\u0600-\u06FF]+", low)
     if any(tok in urdu_markers for tok in tokens):
@@ -489,6 +682,15 @@ def detect_language(text: str) -> str:
         return "AR"
 
     return "EN"
+
+
+def detect_quran_lang(text: str) -> str:
+    """Locks Quran Tafseer/Translation to Pure Urdu unless English or Arabic is explicitly requested."""
+    if has_word(text, ["in english", "english mein", "english translation", "english tafseer", "انگریزی میں"]):
+        return "EN"
+    if has_word(text, ["in arabic", "arabic mein", "arabi mein", "بالعربية", "عربی میں"]):
+        return "AR"
+    return "UR"
 
 
 def fmt_12_short(mins: int) -> str:
@@ -543,9 +745,11 @@ def build_namaz_response(lang: str) -> Tuple[str, str]:
 
 
 def replace_number_words(text: str) -> str:
-    out = text.lower()
+    out = normalize_digits(text).lower()
     for word, val in NUMBER_WORDS.items():
         out = re.sub(rf"(?<!\w){re.escape(word)}(?!\w)", str(val), out)
+    out = re.sub(r"\bdo\s+(?=(?:se|say|to|ayat|aayat|ayah)\b)", "2 ", out)
+    out = re.sub(r"(?<=(?:ayat|aayat|ayah|se|say|to)\s)do\b", "2", out)
     return out
 
 
@@ -557,34 +761,62 @@ def get_last_quran_context() -> Tuple[Optional[int], Optional[int]]:
     return None, None
 
 
-def parse_quran_request(text: str) -> Tuple[Optional[int], Optional[int], Optional[int], bool]:
-    low = text.lower()
+def _norm_ar_match(s: str) -> str:
+    s = re.sub(r"[\u064B-\u065F\u0670\u0640]", "", s or "")
+    s = s.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا").replace("ة", "ہ").replace("ۃ", "ہ").replace("ي", "ی")
+    s = re.sub(r"(?<!\w)ال(?!له\b)(?=[\u0600-\u06FF]{2,})", "", s)
+    return s
 
-    if any(k in low for k in ["ayatul kursi", "ayat ul kursi", "ayat-ul-kursi", "آیت الکرسی", "آية الكرسي"]):
+
+def parse_quran_request(text: str) -> Tuple[Optional[int], Optional[int], Optional[int], bool]:
+    """Collision-free Quran parser: handles Arabic/Urdu prefixes, Part 1/2, and forward/reverse ayah numbers."""
+    norm_text = normalize_digits(text or "")
+    low = norm_text.lower()
+
+    if has_word(low, ["ayatul kursi", "ayat ul kursi", "ayat-ul-kursi", "آیت الکرسی", "آية الكرسي"]):
         return 2, 255, 255, False
-    if any(k in low for k in ["amanar rasul", "amanar rasool", "آمن الرسول"]):
+    if has_word(low, ["amanar rasul", "amanar rasool", "آمن الرسول"]):
         return 2, 285, 286, False
-    if any(k in low for k in ["deebacha", "dibacha", "muqadma", "muqaddama", "tafheem introduction", "دیباچہ", "مقدمہ"]):
+    if has_word(low, ["deebacha", "dibacha", "muqadma", "muqaddama", "tafheem introduction", "دیباچہ", "مقدمہ"]):
         return 0, None, None, False
 
+    explicit_q = has_explicit_quran_context(low)
+    follow_up = is_follow_up_ayah_request(low)
+
+    if not explicit_q and not follow_up:
+        return None, None, None, False
+
+    # Strip part markers so 'part 2' or 'hissa 2' never gets misread as Surah/Ayah number
+    rem = re.sub(
+        r"\b(?:part|hissa|پارٹ|حصہ|पार्ट)\s*(?:1|2|one|two|ek|do)\b|\b(?:first|second|pehla|doosra|dusra)\s*(?:part|hissa)\b",
+        " ",
+        low,
+    )
+
     surah_num = None
-    m_surah = re.search(r"(?:surah|sura|sury|suraj|سوره|سورہ|سورة|सूरह)\s*(?:number|no\.?|نمبر)?\s*(\d{1,3})", low)
+    m_surah = re.search(r"(?:surah|sura|sury|suraj|suratul|سوره|سورہ|سورۃ|سورة|सूरह)\s*(?:number|no\.?|نمبر)?\s*(\d{1,3})", rem)
     if m_surah:
         surah_num = max(1, min(114, int(m_surah.group(1))))
+        rem = rem[:m_surah.start()] + " " + rem[m_surah.end():]
     else:
+        rem_norm = _norm_ar_match(rem)
         for name in sorted(SURAH_NAMES.keys(), key=len, reverse=True):
-            if re.search(rf"(?<!\w){re.escape(name)}(?!\w)", low):
+            n_clean = _norm_ar_match(name)
+            m_nm = re.search(rf"(?<!\w){re.escape(n_clean)}(?!\w)", rem_norm)
+            if m_nm:
                 surah_num = SURAH_NAMES[name]
+                rem = rem_norm[:m_nm.start()] + " " + rem_norm[m_nm.end():]
                 break
 
+    norm = replace_number_words(rem)
     last_s, last_ay = get_last_quran_context()
-    if surah_num is None and (is_follow_up_ayah_request(low) or is_tafseer_intent(low)):
+
+    has_explicit_ayah_word = has_word(low, ["ayat", "aayat", "ayah", "verse", "verses", "آیت", "آیات", "آية", "आयत", "आयात"])
+    if surah_num is None and (follow_up or has_explicit_ayah_word):
         if last_s is not None:
             surah_num = last_s
 
-    norm = replace_number_words(low)
-
-    if is_follow_up_ayah_request(low) and surah_num is not None:
+    if follow_up and surah_num is not None:
         base_ay = (last_ay or 1) + 1
         return surah_num, base_ay, base_ay + 2, False
 
@@ -592,15 +824,10 @@ def parse_quran_request(text: str) -> Tuple[Optional[int], Optional[int], Option
         r"(?:ayat|aayat|ayah|verse|آیت|آیات|آية|आयत)?\s*(\d{1,3})\s*(?:se|say|to|-|تا|إلى|से)\s*(\d{1,3})",
         norm,
     )
-    if m_range:
+    if m_range and (has_explicit_ayah_word or surah_num is not None):
         s_ay = max(1, int(m_range.group(1)))
         e_ay = max(s_ay, min(s_ay + 10, int(m_range.group(2))))
         return surah_num, s_ay, e_ay, False
-
-    m_single = re.search(r"(?:ayat|aayat|ayah|verse|آیت|آية|आयत)\s*(?:number|no\.?|نمبر)?\s*(\d{1,3})", norm)
-    if m_single:
-        a = max(1, int(m_single.group(1)))
-        return surah_num, a, a, False
 
     m_first = re.search(
         r"(?:first|pehli|pehlay|pehle|shuru\s*ki|ابتدائی|پہلی|أول|पहली)\s*(\d{1,2})\s*(?:ayat|aayat|ayah|ayahs|verses|آیات|آیت|آية|आयत|आयात)",
@@ -618,9 +845,19 @@ def parse_quran_request(text: str) -> Tuple[Optional[int], Optional[int], Option
         n = max(1, min(10, int(m_last.group(1))))
         return surah_num, n, n, True
 
-    if surah_num is None:
+    m_single = re.search(r"(?:ayat|aayat|ayah|verse|آیت|آية|आयत)\s*(?:number|no\.?|نمبر)?\s*(\d{1,3})", norm)
+    if m_single:
+        a = max(1, int(m_single.group(1)))
+        return surah_num, a, a, False
+
+    m_single_rev = re.search(r"(\d{1,3})\s*(?:number|no\.?|نمبر)?\s*(?:ayat|aayat|ayah|verse|آیت|آية|आयत)", norm)
+    if m_single_rev:
+        a = max(1, int(m_single_rev.group(1)))
+        return surah_num, a, a, False
+
+    if surah_num is None and has_word(low, ["surah", "sura", "سورہ", "سورۃ", "سورة", "सूरह"]):
         nums = [int(x) for x in re.findall(r"\b(\d{1,3})\b", norm)]
-        if nums and any(k in low for k in ["surah", "sura", "quran", "سورہ", "سورة", "قرآن", "सूरह"]):
+        if nums:
             surah_num = max(1, min(114, nums[0]))
 
     return surah_num, None, None, False
@@ -633,15 +870,17 @@ def _encode_url_path(url: str) -> str:
 
 
 async def _resolve_final_mp3_url(url: str) -> str:
-    if url in RESOLVED_URL_CACHE:
-        return RESOLVED_URL_CACHE[url]
+    now_t = time.time()
+    cached = RESOLVED_URL_CACHE.get(url)
+    if cached and (now_t - cached[0]) < 1800:
+        return cached[1]
     headers = {"User-Agent": "Mozilla/5.0 (compatible; ESP32Assistant/2.0)"}
     try:
         async with httpx.AsyncClient(timeout=10.0, follow_redirects=True, headers=headers) as client:
             r = await client.head(url)
             if r.status_code in (200, 206):
                 final_u = str(r.url)
-                RESOLVED_URL_CACHE[url] = final_u
+                RESOLVED_URL_CACHE[url] = (now_t, final_u)
                 return final_u
     except Exception as ex:
         print(f"Redirect resolve warning: {ex}")
@@ -649,7 +888,6 @@ async def _resolve_final_mp3_url(url: str) -> str:
 
 
 async def _load_archive_surah_map(item_id: str) -> Dict[int, str]:
-    """Builds {surah_num: direct_mp3_url} prioritizing HIGHER-QUALITY VBR MP3 over muffled 64kbps."""
     if item_id in ARCHIVE_MAP_CACHE and ARCHIVE_MAP_CACHE[item_id]:
         return ARCHIVE_MAP_CACHE[item_id]
 
@@ -671,7 +909,6 @@ async def _load_archive_surah_map(item_id: str) -> Dict[int, str]:
                 fmt = str(f.get("format") or "").lower()
                 low_fn = fname.lower()
                 if low_fn.endswith(".mp3"):
-                    # Prefer clean higher-bitrate VBR / original MP3 over muddy 64kbps
                     if "64kbps" in fmt or low_fn.endswith("_64kb.mp3"):
                         prio = 3
                     elif "vbr mp3" in fmt:
@@ -717,7 +954,8 @@ async def _load_archive_surah_map(item_id: str) -> Dict[int, str]:
     return smap
 
 
-async def _load_quranurdu_mishari_map() -> Dict[int, str]:
+async def _load_quranurdu_mishari_map() -> Dict[int, Dict[int, str]]:
+    """Caches both Part 1 and Part 2 MP3 URLs for Mishary Alafasy + Syed Maududi Urdu translation."""
     if QURANURDU_MAP_CACHE:
         return QURANURDU_MAP_CACHE
     headers = {"User-Agent": "Mozilla/5.0 (compatible; ESP32Assistant/2.0)"}
@@ -735,8 +973,16 @@ async def _load_quranurdu_mishari_map() -> Dict[int, str]:
                         if 1 <= n <= 114:
                             grouped.setdefault(n, []).append(h)
                 for n, lst in grouped.items():
-                    lst.sort(key=lambda x: (0 if "(1)" in x else 1, len(x)))
-                    QURANURDU_MAP_CACHE[n] = _encode_url_path(urllib.parse.urljoin(QURANURDU_MISHARI_PAGE, lst[0]))
+                    parts_map: Dict[int, str] = {}
+                    for h in lst:
+                        dec = urllib.parse.unquote(h)
+                        full_u = _encode_url_path(urllib.parse.urljoin(QURANURDU_MISHARI_PAGE, h))
+                        if "(2)" in dec:
+                            parts_map[2] = full_u
+                        elif "(1)" in dec or 1 not in parts_map:
+                            parts_map[1] = full_u
+                    if parts_map:
+                        QURANURDU_MAP_CACHE[n] = parts_map
                 print(f"Loaded {len(QURANURDU_MAP_CACHE)} Surahs from QuranUrdu Mishary+Maududi")
     except Exception as ex:
         print(f"QuranUrdu map error: {ex}")
@@ -744,7 +990,6 @@ async def _load_quranurdu_mishari_map() -> Dict[int, str]:
 
 
 async def fetch_tafheem_tafseer_mp3(surah_num: int) -> Optional[str]:
-    """Real Human Voice: Full Tafheem-ul-Quran Tafseer + Translation (Syed Maududi, all 114 Surahs)."""
     for item_id in (ARCHIVE_TAFHEEM_FULL_ID, ARCHIVE_TAFHEEM_SHORT_ID):
         smap = await _load_archive_surah_map(item_id)
         if surah_num in smap:
@@ -754,12 +999,13 @@ async def fetch_tafheem_tafseer_mp3(surah_num: int) -> Optional[str]:
     return None
 
 
-async def fetch_human_urdu_translation_mp3(surah_num: int) -> Optional[str]:
-    """Real Human Voice: Urdu Translation + Tilawat (Mishary + Syed Maududi / Shamshad Ali Khan)."""
+async def fetch_human_urdu_translation_mp3(surah_num: int, part: int = 1) -> Optional[str]:
     qmap = await _load_quranurdu_mishari_map()
     if surah_num in qmap:
-        print(f"Urdu Translation MP3 (QuranUrdu {surah_num}): {qmap[surah_num]}")
-        return qmap[surah_num]
+        url = qmap[surah_num].get(part) or qmap[surah_num].get(1)
+        if url:
+            print(f"Urdu Translation MP3 (QuranUrdu {surah_num} P{part}): {url}")
+            return url
 
     smap = await _load_archive_surah_map(ARCHIVE_SHAMSHAD_ID)
     if surah_num in smap:
@@ -773,7 +1019,6 @@ async def fetch_human_urdu_translation_mp3(surah_num: int) -> Optional[str]:
 async def fetch_quran_verses(
     surah_num: int, start_ay: Optional[int], end_ay: Optional[int], is_last: bool
 ) -> Tuple[str, str, int, List[Tuple[int, str, str, str]], Optional[int]]:
-    """Fetches exact Syed Abul A'la Maududi (ur.maududi) Urdu translation + Arabic + English."""
     urls = [
         f"https://api.alquran.cloud/v1/surah/{surah_num}/editions/quran-uthmani,ur.maududi,en.maududi",
         f"https://api.alquran.cloud/v1/surah/{surah_num}/editions/quran-uthmani,ur.maududi,en.sahih",
@@ -820,171 +1065,6 @@ async def fetch_quran_verses(
             except Exception as ex:
                 print(f"Quran API error ({url}): {ex}")
     return "", "", 0, [], None
-
-
-async def build_clean_tafseer_audio(
-    surah_num: int, start_ay: Optional[int], end_ay: Optional[int], is_last: bool, lang: str
-) -> Tuple[str, str, str, Optional[int]]:
-    """Exact Syed Maududi (ur.maududi) translation + Tafheem-ul-Quran faithful Tafseer for specific ayahs."""
-    s_name_en, s_name_ar, total_ay, ayahs, actual_last_ayah = await fetch_quran_verses(
-        surah_num, start_ay, end_ay, is_last
-    )
-    if not ayahs:
-        txt = f"سورہ نمبر {surah_num} کی معلومات ابھی لوڈ نہیں ہو سکیں۔" if lang == "UR" else f"Could not load Surah {surah_num} right now."
-        url, _ = await make_tts_with_duration(txt, voice_code_for_lang(lang))
-        return f"SURAH {surah_num}", url, txt, None
-
-    rev_type = "Madani" if surah_num in MADANI_SURAHS else "Makki"
-    first_a = ayahs[0][0]
-    last_a = ayahs[-1][0]
-    surah_ur = clean_surah_name_urdu(s_name_ar, surah_num)
-    rev_ur = "مدنی" if rev_type == "Madani" else "مکی"
-
-    if lang == "UR":
-        cleaned_verses = [(anum, clean_urdu_for_tts(ur_t)) for anum, _, ur_t, _ in ayahs]
-        verse_block = "\n".join(f"آیت {anum}: {ut}" for anum, ut in cleaned_verses)
-        tafseer_part = ""
-        sys_p = (
-            "You are an Islamic scholar explaining the Quran strictly according to Tafheem-ul-Quran by Syed Abul A'la Maududi in clear, natural Urdu script (اردو). "
-            "Explain the shan-e-nuzool (context) and key Tafheem-ul-Quran commentary points of ONLY the given verses in 5 to 7 crisp, clear sentences. "
-            "Do NOT repeat the word-for-word translation, do NOT use Arabic harakat, write اللہ with Urdu ہ, and never output DISPLAY or VOICE labels."
-        )
-        usr_p = (
-            f"Surah {surah_num} ({s_name_en}), {rev_type}, Ayahs {first_a} to {last_a} (Syed Maududi Translation):\n{verse_block}\n"
-            "Give the exact Tafheem-ul-Quran explanation for these verses in Urdu."
-        )
-        res = await call_groq_bilingual(sys_p, usr_p, "UR", "normal")
-        if res and res[1]:
-            tafseer_part = clean_urdu_for_tts(res[1])
-
-        if last_a > first_a:
-            intro = f"{surah_ur}، {rev_ur}۔ تفہیم القرآن کے مطابق آیت {first_a} سے {last_a} تک ترجمہ اور تفسیر۔"
-        else:
-            intro = f"{surah_ur}، {rev_ur}۔ تفہیم القرآن کے مطابق آیت {first_a} کا ترجمہ اور تفسیر۔"
-
-        parts = [intro]
-        for anum, ut in cleaned_verses:
-            parts.append(f"آیت {anum}۔ {ut}۔")
-        if tafseer_part:
-            parts.append(f"تفسیر تفہیم القرآن۔ {tafseer_part}")
-
-        script = " ".join(parts)
-        url, _ = await make_tts_with_duration(script, "UR-M")
-        return f"AYAH {surah_num}:{first_a}", url, script, actual_last_ayah
-
-    if lang == "AR":
-        parts = [f"{clean_arabic_display(s_name_ar)}، السورة {surah_num}، عدد آياتها {total_ay}."]
-        for anum, ar_t, _, _ in ayahs:
-            parts.append(f"الآية {anum}: {ar_t}")
-        script = " ".join(parts)
-        url, _ = await make_tts_with_duration(script, "AR-M")
-        return f"AYAH {surah_num}:{first_a}", url, script, actual_last_ayah
-
-    parts = [f"{s_name_en}, Surah {surah_num}, {rev_type}. Translation by Syed Abul Ala Maududi."]
-    for anum, _, _, en_t in ayahs:
-        parts.append(f"Verse {anum}: {en_t}")
-    sys_p = (
-        "You are a clear Islamic scholar. Explain these verses strictly according to Tafheem-ul-Quran by Syed Abul Ala Maududi "
-        "in 4 to 5 simple, easy-to-understand English sentences."
-    )
-    usr_p = f"Surah {surah_num} ({s_name_en}), Verses {first_a} to {last_a}."
-    res = await call_groq_bilingual(sys_p, usr_p, "EN", "normal")
-    if res and res[1]:
-        parts.append(f"Tafseer: {res[1]}")
-    script = " ".join(parts)
-    url, _ = await make_tts_with_duration(script, "EN-M")
-    return f"AYAH {surah_num}:{first_a}", url, script, actual_last_ayah
-
-
-def voice_code_for_lang(lang: str) -> str:
-    return {"UR": "UR-M", "EN": "EN-M", "AR": "AR-M"}.get(lang, "UR-M")
-
-
-async def fetch_rss_items(urls: List[str], limit: int = 5) -> List[str]:
-    items: List[str] = []
-    headers = {"User-Agent": "Mozilla/5.0 (compatible; ESP32Assistant/2.0)"}
-    async with httpx.AsyncClient(timeout=7.0, follow_redirects=True, headers=headers) as client:
-        for u in urls:
-            try:
-                r = await client.get(u)
-                if r.status_code != 200:
-                    continue
-                root = ET.fromstring(r.text)
-                for item in root.findall(".//item"):
-                    title = (item.findtext("title") or "").strip()
-                    pub = (item.findtext("pubDate") or "").strip()
-                    if title:
-                        clean_t = re.sub(r"\s+", " ", title)
-                        items.append(f"{clean_t} ({pub[:16]})" if pub else clean_t)
-                    if len(items) >= limit:
-                        return items
-            except Exception as ex:
-                print(f"RSS error ({u}): {ex}")
-    return items
-
-
-async def fetch_cricket_context(query: str) -> List[str]:
-    q_extra = re.sub(r"\b(cricket|news|live|score|scores|match|aaj|ki|kya|hai|batao|sunao)\b", "", query, flags=re.I).strip()
-    search_q = f"cricket live score match {q_extra}".strip()
-    gnews = f"https://news.google.com/rss/search?q={urllib.parse.quote(search_q)}&hl=en-IN&gl=IN&ceid=IN:en"
-    feeds = [
-        "https://www.espncricinfo.com/rss/content/story/feeds/0.xml",
-        gnews,
-    ]
-    return await fetch_rss_items(feeds, limit=5)
-
-
-async def fetch_news_context(query: str) -> List[str]:
-    cleaned = re.sub(
-        r"\b(news|khabar|khabrein|khabrai|headlines|live|today|aaj|ki|ka|ke|taza|latest|breaking|batao|bataiye|sunao|sunawo|tell|me|about|what|is|the)\b",
-        "",
-        query,
-        flags=re.I,
-    ).strip()
-    cleaned = re.sub(r"\s+", " ", cleaned)
-
-    feeds: List[str] = []
-    if cleaned and len(cleaned) >= 2:
-        feeds.append(
-            f"https://news.google.com/rss/search?q={urllib.parse.quote(cleaned)}&hl=en-IN&gl=IN&ceid=IN:en"
-        )
-    feeds.extend([
-        "https://news.google.com/rss?hl=en-IN&gl=IN&ceid=IN:en",
-        "https://feeds.bbci.co.uk/news/world/asia/rss.xml",
-        "https://www.aljazeera.com/xml/rss/all.xml",
-    ])
-    return await fetch_rss_items(feeds, limit=5)
-
-
-async def fetch_weather_info(query: str) -> Tuple[str, Optional[float], Optional[float]]:
-    lat, lon, place = 34.0837, 74.7973, "Srinagar"
-    m_city = re.search(r"(?:in|at|of|mein|me|ka|ki)\s+([a-zA-Z]{3,20})", query, flags=re.I)
-    if m_city:
-        cand = m_city.group(1).strip()
-        if cand.lower() not in {"aaj", "today", "abhi", "now", "kaisa", "weather", "mausam", "mosam", "kya", "hai"}:
-            try:
-                async with httpx.AsyncClient(timeout=5.0) as client:
-                    g = await client.get(
-                        f"https://geocoding-api.open-meteo.com/v1/search?name={urllib.parse.quote(cand)}&count=1"
-                    )
-                    if g.status_code == 200 and g.json().get("results"):
-                        res = g.json()["results"][0]
-                        lat, lon, place = res["latitude"], res["longitude"], res["name"]
-            except Exception:
-                pass
-    try:
-        url = (
-            f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}"
-            "&current=temperature_2m,wind_speed_10m&timezone=Asia%2FKolkata"
-        )
-        async with httpx.AsyncClient(timeout=7.0) as client:
-            r = await client.get(url)
-            if r.status_code == 200:
-                cur = r.json().get("current", {})
-                return place, cur.get("temperature_2m"), cur.get("wind_speed_10m")
-    except Exception as ex:
-        print(f"Weather error: {ex}")
-    return place, None, None
 
 
 def _rank_groq_model(mid: str) -> int:
@@ -1041,6 +1121,234 @@ async def get_available_groq_models(key: str) -> List[str]:
     return FALLBACK_GROQ_MODELS
 
 
+async def call_groq_pure_urdu_tafseer(system_prompt: str, user_prompt: str) -> str:
+    """Dedicated pure-Urdu LLM call for Tafseer with zero DISPLAY/VOICE clash and zero English leakage."""
+    if not RAW_KEYS:
+        return ""
+
+    for key in RAW_KEYS:
+        models = await get_available_groq_models(key)
+        for model in models:
+            try:
+                async with httpx.AsyncClient(timeout=24.0) as client:
+                    resp = await client.post(
+                        "https://api.groq.com/openai/v1/chat/completions",
+                        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                        json={
+                            "model": model,
+                            "messages": [
+                                {"role": "system", "content": system_prompt},
+                                {"role": "user", "content": user_prompt},
+                            ],
+                            "max_tokens": 650,
+                            "temperature": 0.15,
+                        },
+                    )
+                    if resp.status_code == 200:
+                        raw = resp.json()["choices"][0]["message"]["content"].strip()
+                        raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.S).strip()
+                        pure = re.sub(r"[A-Za-z]+", "", raw)
+                        pure = clean_urdu_for_tts(pure)
+                        if len(pure) >= 25 and re.search(r"[\u0600-\u06FF]{10,}", pure):
+                            print(f"Pure Urdu Tafseer OK [{model}]")
+                            return pure
+                    print(f"Tafseer Groq {model} ({resp.status_code}): {resp.text[:140]}")
+            except Exception as ex:
+                print(f"Tafseer Groq {model} exception: {ex}")
+    return ""
+
+
+async def build_clean_tafseer_audio(
+    surah_num: int,
+    start_ay: Optional[int],
+    end_ay: Optional[int],
+    is_last: bool,
+    lang: str,
+    include_tafseer: bool = True,
+) -> Tuple[str, str, str, Optional[int]]:
+    """Exact Syed Maududi (ur.maududi) translation, plus pure Urdu Tafheem-ul-Quran Tafseer when requested."""
+    s_name_en, s_name_ar, total_ay, ayahs, actual_last_ayah = await fetch_quran_verses(
+        surah_num, start_ay, end_ay, is_last
+    )
+    if not ayahs:
+        txt = f"سورہ نمبر {surah_num} کی معلومات ابھی لوڈ نہیں ہو سکیں۔" if lang == "UR" else f"Could not load Surah {surah_num} right now."
+        url, _ = await make_tts_with_duration(txt, voice_code_for_lang(lang))
+        return f"SURAH {surah_num}", url, txt, None
+
+    rev_type = "Madani" if surah_num in MADANI_SURAHS else "Makki"
+    first_a = ayahs[0][0]
+    last_a = ayahs[-1][0]
+    surah_ur = clean_surah_name_urdu(s_name_ar, surah_num)
+    rev_ur = "مدنی" if rev_type == "Madani" else "مکی"
+
+    if lang == "UR":
+        cleaned_verses = [(anum, clean_urdu_for_tts(ur_t)) for anum, _, ur_t, _ in ayahs]
+        tafseer_part = ""
+
+        if include_tafseer:
+            verse_block = "\n".join(f"آیت {anum}: {ut}" for anum, ut in cleaned_verses)
+            sys_p = (
+                "آپ ایک مستند اردو عالمِ دین ہیں۔ آپ کو صرف خالص، سلیس، اور درست اردو زبان میں مولانا سید ابوالاعلیٰ مودودی کی تفسیر کے مطابق دی گئی آیت یا آیات کی تفسیر بیان کرنی ہے۔\n"
+                "سخت اصول:\n"
+                "1) پورا جواب صرف خالص اردو رسم الخط (اردو) میں ہو۔ ایک بھی انگریزی لفظ، رومن اردو، ہیڈنگ، یا بلٹ پوائنٹ نہ لکھیں۔\n"
+                "2) اردو گرامر اور جملوں کی ساخت بالکل فطری، بامحاورہ اور درست ہو، ترجمہ زدہ یا ٹوٹے ہوئے جملے ہرگز نہ ہوں۔\n"
+                "3) آیت کا لفظی ترجمہ دوبارہ نہ دہرائیں اور کتاب کا نام بار بار نہ لیں، بلکہ سیدھا شانِ نزول، پسِ منظر، شرعی یا فکری حکم، اور مولانا مودودی کے اہم تفسیری نکات 5 سے 7 صاف جملوں میں بیان کریں۔\n"
+                "4) عربی اعراب نہ لگائیں اور اللہ کو اردو ہ کے ساتھ لکھیں۔"
+            )
+            usr_p = (
+                f"{surah_ur} ({rev_ur})، آیت {first_a} سے {last_a} تک مولانا مودودی کا ترجمہ:\n"
+                f"{verse_block}\n\n"
+                "اب ان آیات کی خالص اردو میں مولانا مودودی کی تفسیر کے مطابق صاف اور مستند وضاحت لکھیں۔"
+            )
+            tafseer_part = await call_groq_pure_urdu_tafseer(sys_p, usr_p)
+
+        kind_ur = "ترجمہ اور تفسیر" if include_tafseer else "ترجمہ"
+        if last_a > first_a:
+            intro = f"{surah_ur}، {rev_ur}۔ مولانا مودودی کے مطابق آیت {first_a} سے {last_a} تک کا {kind_ur}۔"
+        else:
+            intro = f"{surah_ur}، {rev_ur}۔ مولانا مودودی کے مطابق آیت {first_a} کا {kind_ur}۔"
+
+        parts = [intro]
+        for anum, ut in cleaned_verses:
+            parts.append(f"آیت {anum}۔ {ut}۔")
+        if tafseer_part:
+            parts.append(f"تفسیر۔ {tafseer_part}")
+
+        script = " ".join(parts)
+        url, _ = await make_tts_with_duration(script, "UR-M")
+        return f"AYAH {surah_num}:{first_a}", url, script, actual_last_ayah
+
+    if lang == "AR":
+        parts = [f"{clean_arabic_display(s_name_ar)}، السورة {surah_num}، عدد آياتها {total_ay}."]
+        for anum, ar_t, _, _ in ayahs:
+            parts.append(f"الآية {anum}: {ar_t}")
+        script = " ".join(parts)
+        url, _ = await make_tts_with_duration(script, "AR-M")
+        return f"AYAH {surah_num}:{first_a}", url, script, actual_last_ayah
+
+    parts = [f"{s_name_en}, Surah {surah_num}, {rev_type}. Translation by Syed Abul Ala Maududi."]
+    for anum, _, _, en_t in ayahs:
+        parts.append(f"Verse {anum}: {en_t}")
+    if include_tafseer:
+        sys_p = (
+            "You are a clear Islamic scholar. Explain these verses strictly according to Tafheem-ul-Quran by Syed Abul Ala Maududi "
+            "in 4 to 5 simple, easy-to-understand English sentences."
+        )
+        usr_p = f"Surah {surah_num} ({s_name_en}), Verses {first_a} to {last_a}."
+        res = await call_groq_bilingual(sys_p, usr_p, "EN", "normal")
+        if res and res[1]:
+            parts.append(f"Tafseer: {res[1]}")
+    script = " ".join(parts)
+    url, _ = await make_tts_with_duration(script, "EN-M")
+    return f"AYAH {surah_num}:{first_a}", url, script, actual_last_ayah
+
+
+def voice_code_for_lang(lang: str) -> str:
+    return {"UR": "UR-M", "EN": "EN-M", "AR": "AR-M"}.get(lang, "UR-M")
+
+
+async def fetch_rss_items(urls: List[str], limit: int = 5) -> List[str]:
+    items: List[str] = []
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; ESP32Assistant/2.0)"}
+    async with httpx.AsyncClient(timeout=7.0, follow_redirects=True, headers=headers) as client:
+        for u in urls:
+            try:
+                r = await client.get(u)
+                if r.status_code != 200:
+                    continue
+                root = ET.fromstring(r.content)
+                for item in root.findall(".//item"):
+                    title = (item.findtext("title") or "").strip()
+                    pub = (item.findtext("pubDate") or "").strip()
+                    if title:
+                        clean_t = re.sub(r"\s+", " ", title)
+                        items.append(f"{clean_t} ({pub[:16]})" if pub else clean_t)
+                    if len(items) >= limit:
+                        return items
+            except Exception as ex:
+                print(f"RSS error ({u}): {ex}")
+    return items
+
+
+async def fetch_cricket_context(query: str) -> List[str]:
+    q_extra = re.sub(r"\b(cricket|news|live|score|scores|match|aaj|ki|kya|hai|batao|sunao)\b", "", query, flags=re.I).strip()
+    search_q = f"cricket live score match {q_extra}".strip()
+    gnews = f"https://news.google.com/rss/search?q={urllib.parse.quote(search_q)}&hl=en-IN&gl=IN&ceid=IN:en"
+    feeds = [
+        "https://www.espncricinfo.com/rss/content/story/feeds/0.xml",
+        gnews,
+    ]
+    return await fetch_rss_items(feeds, limit=5)
+
+
+async def fetch_news_context(query: str) -> List[str]:
+    cleaned = re.sub(
+        r"\b(news|khabar|khabrein|khabrai|headlines|live|today|aaj|ki|ka|ke|taza|latest|breaking|batao|bataiye|sunao|sunawo|tell|me|about|what|is|the)\b",
+        "",
+        query,
+        flags=re.I,
+    ).strip()
+    cleaned = re.sub(r"\s+", " ", cleaned)
+
+    feeds: List[str] = []
+    if cleaned and len(cleaned) >= 2:
+        feeds.append(
+            f"https://news.google.com/rss/search?q={urllib.parse.quote(cleaned)}&hl=en-IN&gl=IN&ceid=IN:en"
+        )
+    feeds.extend([
+        "https://news.google.com/rss?hl=en-IN&gl=IN&ceid=IN:en",
+        "https://feeds.bbci.co.uk/news/world/asia/rss.xml",
+        "https://www.aljazeera.com/xml/rss/all.xml",
+    ])
+    return await fetch_rss_items(feeds, limit=5)
+
+
+async def fetch_weather_info(query: str) -> Tuple[str, Optional[float], Optional[float]]:
+    lat, lon, place = 34.0837, 74.7973, "Srinagar"
+    cand = ""
+
+    m_ur = re.search(
+        r"\b([a-zA-Z]{3,20}(?:\s+[a-zA-Z]{3,20})?)\s+(?:ka|ki|ke|mein|me)\s+(?:mausam|mosam|weather|temperature|barish|baarish)\b",
+        query,
+        flags=re.I,
+    )
+    if m_ur:
+        cand = m_ur.group(1).strip()
+    else:
+        m_en = re.search(r"\b(?:in|at|of|for)\s+([a-zA-Z]{3,20}(?:\s+[a-zA-Z]{3,20})?)\b", query, flags=re.I)
+        if m_en:
+            cand = m_en.group(1).strip()
+
+    if cand:
+        cand = " ".join(w for w in cand.split() if w.lower() not in WEATHER_STOPWORDS).strip()
+
+    if cand:
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                g = await client.get(
+                    f"https://geocoding-api.open-meteo.com/v1/search?name={urllib.parse.quote(cand)}&count=1"
+                )
+                if g.status_code == 200 and g.json().get("results"):
+                    res = g.json()["results"][0]
+                    lat, lon, place = res["latitude"], res["longitude"], res["name"]
+        except Exception:
+            pass
+
+    try:
+        url = (
+            f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}"
+            "&current=temperature_2m,wind_speed_10m&timezone=Asia%2FKolkata"
+        )
+        async with httpx.AsyncClient(timeout=7.0) as client:
+            r = await client.get(url)
+            if r.status_code == 200:
+                cur = r.json().get("current", {})
+                return place, cur.get("temperature_2m"), cur.get("wind_speed_10m")
+    except Exception as ex:
+        print(f"Weather error: {ex}")
+    return place, None, None
+
+
 async def call_groq_bilingual(system_prompt: str, user_prompt: str, lang: str, length_mode: str = "normal") -> Optional[Tuple[str, str]]:
     if not RAW_KEYS:
         return None
@@ -1048,20 +1356,20 @@ async def call_groq_bilingual(system_prompt: str, user_prompt: str, lang: str, l
     history_ctx = format_history_for_prompt()
 
     if length_mode == "brief":
-        length_rule = "LENGTH MODE: BRIEF. Give a short, clear, accurate answer in 1 to 2 sentences."
+        length_rule = "LENGTH MODE: BRIEF. Give a short, crisp, accurate answer in 1 to 2 sentences."
         max_tokens = 240
     elif length_mode == "long":
-        length_rule = "LENGTH MODE: DETAILED. Give a thorough, well-structured, accurate answer in 6 to 9 clear sentences."
+        length_rule = "LENGTH MODE: DETAILED. Give a thorough, clear, well-structured answer in 6 to 9 natural sentences."
         max_tokens = 1200
     else:
-        length_rule = "LENGTH MODE: NORMAL. Give a clear, direct, accurate answer in 2 to 4 natural sentences."
-        max_tokens = 600
+        length_rule = "LENGTH MODE: NORMAL. Give a direct, clear, accurate answer in 2 to 4 natural sentences."
+        max_tokens = 620
 
     if lang == "UR":
         format_rule = (
             "STRICT LANGUAGE LOCK: User spoke in URDU / ROMAN URDU.\n"
-            "Write natural, everyday spoken Urdu — NEVER use awkward literal translations, broken grammar, or robotic filler words.\n"
-            "Reply using EXACTLY these two lines and nothing else:\n"
+            "Write natural, everyday spoken Urdu — NEVER use robotic phrasing, awkward literal translations, or broken grammar.\n"
+            "Reply using EXACTLY these two plain lines with NO markdown stars or extra text:\n"
             "DISPLAY: <Clean, accurate answer in Roman Urdu using A-Z and 0-9 only; NO Urdu script, NO DISPLAY/VOICE words>\n"
             "VOICE: <Exact same clean, accurate answer in natural Urdu script (اردو) with proper punctuation (۔); NO Arabic harakat, NO DISPLAY/VOICE words>\n"
             f"{length_rule}\n"
@@ -1077,8 +1385,8 @@ async def call_groq_bilingual(system_prompt: str, user_prompt: str, lang: str, l
     else:
         format_rule = (
             "STRICT LANGUAGE LOCK: User spoke in ENGLISH.\n"
-            "Use SIMPLE, CLEAR, everyday Indian English that anyone can easily understand when spoken aloud. "
-            "Avoid complex jargon, fancy vocabulary, tongue-twisting words, or markdown symbols.\n"
+            "Use SIMPLE, CLEAR, everyday Indian English that is very easy to understand when spoken aloud. "
+            "Avoid complex jargon, heavy vocabulary, tongue-twisters, or markdown symbols.\n"
             f"{length_rule}\n"
             "Answer directly and accurately, using Conversation History for follow-ups."
         )
@@ -1106,29 +1414,32 @@ async def call_groq_bilingual(system_prompt: str, user_prompt: str, lang: str, l
                     if resp.status_code == 200:
                         raw = resp.json()["choices"][0]["message"]["content"].strip()
                         raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.S).strip()
+                        raw_clean_md = raw.replace("**", "").replace("__", "")
                         print(f"Groq OK [{model}] lang={lang} mode={length_mode}")
 
                         if lang == "UR":
-                            m_disp = re.search(r"DISPLAY:\s*(.+?)(?=\nVOICE:|\Z)", raw, flags=re.S | re.I)
-                            m_voice = re.search(r"VOICE:\s*(.+)", raw, flags=re.S | re.I)
+                            m_disp = re.search(r"DISPLAY\s*:\s*(.+?)(?=\n\s*VOICE\s*:|\Z)", raw_clean_md, flags=re.S | re.I)
+                            m_voice = re.search(r"VOICE\s*:\s*(.+)", raw_clean_md, flags=re.S | re.I)
                             if m_disp and m_voice:
                                 disp = clean_ascii(m_disp.group(1))
                                 voice = clean_urdu_for_tts(clean_voice_script(m_voice.group(1)))
-                                if disp and voice:
+                                if voice:
+                                    if len(disp) < 4:
+                                        disp = urdu_to_roman_fallback(voice)
                                     return disp, voice
-                            voice_only = clean_urdu_for_tts(clean_voice_script(raw))
-                            disp_fb = clean_ascii(voice_only)
-                            if disp_fb and voice_only:
-                                return disp_fb, voice_only
+                            voice_only = clean_urdu_for_tts(clean_voice_script(raw_clean_md))
                             if voice_only:
-                                return voice_only[:180], voice_only
+                                disp_fb = clean_ascii(voice_only)
+                                if len(disp_fb) < 4:
+                                    disp_fb = urdu_to_roman_fallback(voice_only)
+                                return disp_fb, voice_only
 
                         if lang == "AR":
-                            ar_clean = clean_arabic_display(raw)
+                            ar_clean = clean_arabic_display(raw_clean_md)
                             if ar_clean:
                                 return ar_clean, ar_clean
                         else:
-                            en_clean = clean_ascii(raw)
+                            en_clean = clean_ascii(raw_clean_md)
                             if en_clean:
                                 return en_clean, en_clean
 
@@ -1183,8 +1494,8 @@ async def transcribe_wav(wav_bytes: bytes) -> str:
     if not RAW_KEYS:
         return ""
     hint_prompt = (
-        "Surah Ikhlas ki tafseer sunao, Tafheem-ul-Quran Surah Yaseen, Surah Baqarah aayat 160 se 165 ka tarjuma aur tafseer, "
-        "Namaz ka waqt, Mausam, News, Cricket, Python, Education, Brief mein batao, Tafseel se batao."
+        "Surah Ikhlas ki tafseer sunao, Surah Baqarah part 2 ka tarjuma, Surah Baqarah aayat 160 se 165 ki tafseer, "
+        "Namaz ka waqt, Mausam, News, Cricket, Python, Education, Slow bolo, Fast bolo, Brief mein batao."
     )
     for key in RAW_KEYS:
         try:
@@ -1231,7 +1542,7 @@ async def fetch_google_tts_mp3(text: str, lang_code: str) -> bytes:
     mp3_bytes = bytearray()
     headers = {"User-Agent": "Mozilla/5.0"}
     async with httpx.AsyncClient(timeout=12.0, headers=headers) as client:
-        for ch in chunks[:24]:
+        for ch in chunks[:28]:
             url = (
                 f"https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob"
                 f"&tl={tl}&q={urllib.parse.quote(ch)}"
@@ -1250,7 +1561,6 @@ async def make_tts_with_duration(text: str, voice_code: str) -> Tuple[str, int]:
     out_path = os.path.join(AUDIO_DIR, f"{fid}.mp3")
     voice = VOICE_MAP.get(voice_code, "ur-PK-AsadNeural")
 
-    # Slightly relaxed, crystal-clear speaking pace for both English and Urdu
     if STATE["speed"] == "Norm":
         if voice_code == "EN-M":
             rate = "-6%"
@@ -1300,7 +1610,7 @@ async def make_tts_with_duration(text: str, voice_code: str) -> Tuple[str, int]:
     for fn in os.listdir(AUDIO_DIR):
         fp = os.path.join(AUDIO_DIR, fn)
         try:
-            if os.path.isfile(fp) and now_t - os.path.getmtime(fp) > 300:
+            if os.path.isfile(fp) and now_t - os.path.getmtime(fp) > AUDIO_TTL_SEC:
                 os.remove(fp)
         except Exception:
             pass
@@ -1334,7 +1644,7 @@ def build_synced_pages(display_text: str, total_ms: int, lang: str) -> List[Dict
             if cur:
                 chunks.append(cur)
 
-    chunks = chunks[:24]
+    chunks = chunks[:28]
     if not chunks:
         chunks = [txt[:max_chars]]
 
@@ -1352,19 +1662,13 @@ async def generate_answer(heard: str, lang: str) -> Tuple[str, str, str]:
     hd, hm_en, hm_ur, hy = gregorian_to_hijri(now.year, now.month, now.day)
     hijri_en = f"{hd} {hm_en} {hy}"
     hijri_ur = f"{hd} {hm_ur} {hy} ہجری"
-    low = heard.lower()
     length_mode = detect_length_mode(heard)
 
-    if any(w in low for w in ["namaz", "nimaz", "meeqat", "miqat", "prayer time", "salah time", "نماز", "صلاة", "اوقات", "नमाज", "नमाज़"]):
+    if is_namaz_query(heard):
         disp, tts = build_namaz_response(lang)
         return "NAMAZ", disp, tts
 
-    time_words = [
-        "time", "waqt", "baj", "baje", "date", "tareekh", "tarikh", "hijri",
-        "وقت", "ٹائم", "ٹانم", "بجے", "بجا", "تاریخ", "ہجری",
-        "التاريخ", "الساعة", "वक्त", "टाइम", "बजे", "बजा", "तारीख",
-    ]
-    if any(w in low for w in time_words) and not any(w in low for w in ["namaz", "نماز", "match", "cricket"]):
+    if is_time_or_date_query(heard):
         t_12 = now.strftime("%I:%M %p").lstrip("0")
         d_en = now.strftime("%A, %d %B %Y")
         period_ur = format_urdu_period_and_time(now)
@@ -1378,7 +1682,7 @@ async def generate_answer(heard: str, lang: str) -> Tuple[str, str, str]:
         ans = f"It is {t_12} on {d_en}. Hijri date is {hijri_en}."
         return "TIME", ans, ans
 
-    if any(w in low for w in ["mausam", "mosam", "weather", "temperature", "temp", "barish", "موسم", "الطقس", "मौसम"]):
+    if is_weather_query(heard):
         place, temp, wind = await fetch_weather_info(heard)
         if temp is not None:
             if lang == "AR":
@@ -1391,7 +1695,7 @@ async def generate_answer(heard: str, lang: str) -> Tuple[str, str, str]:
             ans = f"In {place}, it is currently {temp} degrees Celsius with wind at {wind} km/h."
             return "WEATHER", ans, ans
 
-    if any(w in low for w in ["cricket", "ipl", "t20", "odi", "test match", "score", "virat", "rohit", "babar", "کرکٹ", "اسکور", "میچ", "क्रिकेट"]):
+    if is_cricket_query(heard):
         headlines = await fetch_cricket_context(heard)
         if headlines:
             sys_p = (
@@ -1405,7 +1709,7 @@ async def generate_answer(heard: str, lang: str) -> Tuple[str, str, str]:
             fb = clean_ascii(". ".join(headlines[:2]))[:260]
             return "CRICKET", fb, fb
 
-    if any(w in low for w in ["news", "khabar", "khabrein", "khabrai", "headlines", "taza", "latest", "breaking", "خبر", "خبریں", "أخبار", "खबर", "खबरें"]):
+    if is_news_query(heard):
         headlines = await fetch_news_context(heard)
         if headlines:
             sys_p = (
@@ -1420,10 +1724,10 @@ async def generate_answer(heard: str, lang: str) -> Tuple[str, str, str]:
             return "NEWS", fb, fb
 
     sys_p = (
-        f"You are a single, reliable, all-rounder voice assistant based in Srinagar, Kashmir. "
+        f"You are a single, reliable, top-grade all-rounder voice assistant based in Srinagar, Kashmir. "
         f"Today is {now.strftime('%A, %d %B %Y, %I:%M %p IST')} (Hijri: {hijri_en}). "
-        "Give factually accurate, direct, well-spoken answers across every topic: education, psychology, science, math, history, geography, electronics, Python, English grammar, Urdu/Arabic literature, daily life, and authentic Islamic knowledge. "
-        "Never invent facts, never use awkward wording, and stay consistent in tone."
+        "Give factually accurate, direct, well-spoken answers across every field: science, math, education, psychology, history, geography, electronics, Python, English grammar, Urdu and Arabic literature, daily life, and authentic Islamic knowledge. "
+        "Start directly with the answer. Never say 'As an AI', never guess unknown facts, and never use awkward wording."
     )
     res = await call_groq_bilingual(sys_p, heard, lang, length_mode)
     if res:
@@ -1431,6 +1735,13 @@ async def generate_answer(heard: str, lang: str) -> Tuple[str, str, str]:
 
     disp, tts = await wiki_fallback(heard)
     return "INFO", disp, tts
+
+
+def _public_base_url(request: Request) -> str:
+    base = str(request.base_url).rstrip("/")
+    if "onrender.com" in base and base.startswith("http://"):
+        base = "https://" + base[len("http://"):]
+    return base or "https://esp32-ai-voice.onrender.com"
 
 
 @app.get("/")
@@ -1479,47 +1790,41 @@ async def chat(request: Request):
             "monster": STATE["monster"],
         }
 
-    lang = detect_language(heard)
+    heard_norm = normalize_digits(heard)
+    lang = detect_language(heard_norm)
     voice_code = voice_code_for_lang(lang)
     STATE["voice"] = voice_code
-    low = heard.lower()
+    low = heard_norm.lower()
+    word_count = len(re.findall(r"[\w\u0600-\u06FF\u0900-\u097F]+", low))
 
-    if any(k in low for k in ["stop", "ruko", "band karo", "chup", "بند کرو", "رکو", "توقف", "रुको"]) and "monster" not in low and "face" not in low:
+    # 1) STOP command
+    if (
+        word_count <= 5
+        and has_word(low, ["stop", "ruko", "band karo", "chup", "بند کرو", "رکو", "توقف", "रुको"])
+        and not has_word(low, ["monster", "face", "bus", "non", "watch", "train"])
+    ):
         return {
             "action": "STOP",
             "lang": lang,
             "header": "STOP",
-            "heard": clean_ascii(heard)[:20],
+            "heard": clean_ascii(heard_norm)[:20],
             "display": "Stopped.",
             "voice": voice_code,
             "volume": STATE["volume"],
             "monster": STATE["monster"],
         }
 
-    if any(k in low for k in ["mute", "awaaz band", "sound off", "آواز بند"]):
-        STATE["volume"] = 0
-        return {
-            "action": "MUTE",
-            "lang": lang,
-            "header": "MUTE",
-            "heard": clean_ascii(heard)[:20],
-            "display": "Muted.",
-            "voice": voice_code,
-            "volume": 0,
-            "monster": STATE["monster"],
-        }
-
-    m_vol = re.search(r"(?:volume|awaaz|آواز)\s*(?:set|to|par|pe)?\s*(\d{1,2})", low)
-    if m_vol:
-        STATE["volume"] = max(2, min(16, int(m_vol.group(1))))
-        msg_d = f"Volume {STATE['volume']} set ho gaya."
-        msg_t = f"والیوم {STATE['volume']} سیٹ ہو گیا ہے۔" if lang == "UR" else f"Volume set to {STATE['volume']}."
+    # 2) MUTE / UNMUTE commands
+    if word_count <= 5 and has_word(low, ["unmute", "awaaz chalu", "sound on", "آواز چالو"]):
+        STATE["volume"] = max(4, STATE.get("last_nonzero_volume", 11))
+        msg_d = f"Volume {STATE['volume']} chalu ho gaya."
+        msg_t = f"آواز چالو کر دی گئی ہے، والیوم {STATE['volume']} ہے۔" if lang == "UR" else f"Unmuted. Volume is {STATE['volume']}."
         audio_url, total_ms = await make_tts_with_duration(msg_t, voice_code)
         return {
             "action": "SPEAK",
             "lang": lang,
             "header": "VOLUME",
-            "heard": clean_ascii(heard)[:20],
+            "heard": clean_ascii(heard_norm)[:20],
             "display": msg_d,
             "pages": build_synced_pages(msg_d, total_ms, lang),
             "audio_url": audio_url,
@@ -1528,8 +1833,68 @@ async def chat(request: Request):
             "monster": STATE["monster"],
         }
 
-    if any(k in low for k in ["volume up", "awaaz badhao", "awaaz tej", "awaaz tez", "louder", "آواز بڑھاؤ", "آواز تیز"]):
-        STATE["volume"] = min(16, STATE["volume"] + 2)
+    if word_count <= 5 and has_word(low, ["mute", "awaaz band", "sound off", "آواز بند"]):
+        if STATE["volume"] > 0:
+            STATE["last_nonzero_volume"] = STATE["volume"]
+        STATE["volume"] = 0
+        return {
+            "action": "MUTE",
+            "lang": lang,
+            "header": "MUTE",
+            "heard": clean_ascii(heard_norm)[:20],
+            "display": "Muted.",
+            "voice": voice_code,
+            "volume": 0,
+            "monster": STATE["monster"],
+        }
+
+    # 3) CLEAR HISTORY command
+    if word_count <= 6 and has_word(low, ["clear history", "reset chat", "history clear", "nayi baat", "naya chat", "ہسٹری صاف"]):
+        clear_history()
+        msg_d = "Purani chat history saaf ho gayi."
+        msg_t = "پرانی چیٹ ہسٹری صاف کر دی گئی ہے۔" if lang == "UR" else "Chat history cleared."
+        audio_url, total_ms = await make_tts_with_duration(msg_t, voice_code)
+        return {
+            "action": "SPEAK",
+            "lang": lang,
+            "header": "RESET",
+            "heard": clean_ascii(heard_norm)[:20],
+            "display": msg_d,
+            "pages": build_synced_pages(msg_d, total_ms, lang),
+            "audio_url": audio_url,
+            "voice": voice_code,
+            "volume": STATE["volume"],
+            "monster": STATE["monster"],
+        }
+
+    # 4) VOLUME commands (protected against math/physics volume questions)
+    if word_count <= 7 and not has_word(low, ["cube", "cylinder", "sphere", "cone", "formula", "calculate", "area", "math", "physics", "liter", "litre"]):
+        m_vol = re.search(
+            r"(?:volume|awaaz|آواز)(?:\s+(?:ko|set|to|at|on|par|pe|karo|krdo|kardo|rakh|rakho)){0,3}\s+(\d{1,2})\b",
+            low,
+        )
+        if m_vol:
+            STATE["volume"] = max(2, min(16, int(m_vol.group(1))))
+            STATE["last_nonzero_volume"] = STATE["volume"]
+            msg_d = f"Volume {STATE['volume']} set ho gaya."
+            msg_t = f"والیوم {STATE['volume']} سیٹ ہو گیا ہے۔" if lang == "UR" else f"Volume set to {STATE['volume']}."
+            audio_url, total_ms = await make_tts_with_duration(msg_t, voice_code)
+            return {
+                "action": "SPEAK",
+                "lang": lang,
+                "header": "VOLUME",
+                "heard": clean_ascii(heard_norm)[:20],
+                "display": msg_d,
+                "pages": build_synced_pages(msg_d, total_ms, lang),
+                "audio_url": audio_url,
+                "voice": voice_code,
+                "volume": STATE["volume"],
+                "monster": STATE["monster"],
+            }
+
+    if has_word(low, ["volume up", "awaaz badhao", "awaaz tej", "awaaz tez", "louder", "increase volume", "آواز بڑھاؤ", "آواز تیز"]):
+        STATE["volume"] = min(16, max(2, STATE["volume"]) + 2)
+        STATE["last_nonzero_volume"] = STATE["volume"]
         msg_d = f"Volume badha kar {STATE['volume']} kar diya."
         msg_t = f"والیوم بڑھا کر {STATE['volume']} کر دیا ہے۔" if lang == "UR" else f"Volume increased to {STATE['volume']}."
         audio_url, total_ms = await make_tts_with_duration(msg_t, voice_code)
@@ -1537,7 +1902,7 @@ async def chat(request: Request):
             "action": "SPEAK",
             "lang": lang,
             "header": "VOLUME",
-            "heard": clean_ascii(heard)[:20],
+            "heard": clean_ascii(heard_norm)[:20],
             "display": msg_d,
             "pages": build_synced_pages(msg_d, total_ms, lang),
             "audio_url": audio_url,
@@ -1546,8 +1911,9 @@ async def chat(request: Request):
             "monster": STATE["monster"],
         }
 
-    if any(k in low for k in ["volume down", "awaaz kam", "softer", "quieter", "آواز کم"]):
+    if has_word(low, ["volume down", "awaaz kam", "softer", "quieter", "decrease volume", "آواز کم"]):
         STATE["volume"] = max(3, STATE["volume"] - 2)
+        STATE["last_nonzero_volume"] = STATE["volume"]
         msg_d = f"Volume kam kar ke {STATE['volume']} kar diya."
         msg_t = f"والیوم کم کر کے {STATE['volume']} کر دیا ہے۔" if lang == "UR" else f"Volume decreased to {STATE['volume']}."
         audio_url, total_ms = await make_tts_with_duration(msg_t, voice_code)
@@ -1555,7 +1921,7 @@ async def chat(request: Request):
             "action": "SPEAK",
             "lang": lang,
             "header": "VOLUME",
-            "heard": clean_ascii(heard)[:20],
+            "heard": clean_ascii(heard_norm)[:20],
             "display": msg_d,
             "pages": build_synced_pages(msg_d, total_ms, lang),
             "audio_url": audio_url,
@@ -1564,8 +1930,64 @@ async def chat(request: Request):
             "monster": STATE["monster"],
         }
 
-    if any(k in low for k in ["monster", "monister", "animation", "chehra", "face", "مونسٹر", "چہرہ"]):
-        if any(k in low for k in ["off", "band", "close", "hatao", "hide", "home", "بند", "ہٹاؤ"]):
+    # 5) SPEED commands
+    if word_count <= 6 and has_word(low, ["slow bolo", "speed slow", "slow speed", "dheere bolo", "ahista bolo", "speak slowly", "آہستہ بولو", "دھیرے بولو"]):
+        STATE["speed"] = "Slow"
+        msg_d = "Speed slow set ho gayi."
+        msg_t = "اب میں آہستہ بولوں گا۔" if lang == "UR" else "I will speak slowly now."
+        audio_url, total_ms = await make_tts_with_duration(msg_t, voice_code)
+        return {
+            "action": "SPEAK",
+            "lang": lang,
+            "header": "SPEED",
+            "heard": clean_ascii(heard_norm)[:20],
+            "display": msg_d,
+            "pages": build_synced_pages(msg_d, total_ms, lang),
+            "audio_url": audio_url,
+            "voice": voice_code,
+            "volume": STATE["volume"],
+            "monster": STATE["monster"],
+        }
+
+    if word_count <= 6 and has_word(low, ["fast bolo", "speed fast", "fast speed", "tez bolo", "jaldi bolo", "speak fast", "تیز بولو"]):
+        STATE["speed"] = "Fast"
+        msg_d = "Speed fast set ho gayi."
+        msg_t = "اب میں تھوڑا تیز بولوں گا۔" if lang == "UR" else "I will speak faster now."
+        audio_url, total_ms = await make_tts_with_duration(msg_t, voice_code)
+        return {
+            "action": "SPEAK",
+            "lang": lang,
+            "header": "SPEED",
+            "heard": clean_ascii(heard_norm)[:20],
+            "display": msg_d,
+            "pages": build_synced_pages(msg_d, total_ms, lang),
+            "audio_url": audio_url,
+            "voice": voice_code,
+            "volume": STATE["volume"],
+            "monster": STATE["monster"],
+        }
+
+    if word_count <= 6 and has_word(low, ["normal speed", "speed normal", "normal bolo", "نارمل سپیڈ"]):
+        STATE["speed"] = "Norm"
+        msg_d = "Speed normal set ho gayi."
+        msg_t = "سپیڈ نارمل کر دی گئی ہے۔" if lang == "UR" else "Speaking speed set to normal."
+        audio_url, total_ms = await make_tts_with_duration(msg_t, voice_code)
+        return {
+            "action": "SPEAK",
+            "lang": lang,
+            "header": "SPEED",
+            "heard": clean_ascii(heard_norm)[:20],
+            "display": msg_d,
+            "pages": build_synced_pages(msg_d, total_ms, lang),
+            "audio_url": audio_url,
+            "voice": voice_code,
+            "volume": STATE["volume"],
+            "monster": STATE["monster"],
+        }
+
+    # 6) MONSTER FACE commands
+    if has_word(low, ["monster", "monister", "animation", "chehra", "face", "مونسٹر", "چہرہ"]):
+        if has_word(low, ["off", "band", "close", "hatao", "hide", "home", "بند", "ہٹاؤ"]):
             STATE["monster"] = False
             msg_d = "Monster face band ho gaya."
             msg_t = "مونسٹر فیس بند کر دیا گیا ہے۔" if lang == "UR" else "Monster face turned off."
@@ -1581,7 +2003,7 @@ async def chat(request: Request):
                 "volume": STATE["volume"],
                 "monster": False,
             }
-        if any(k in low for k in ["on", "kholo", "open", "dikhao", "chalu", "start", "show", "کھولو", "دکھاؤ", "چالو"]):
+        if has_word(low, ["on", "kholo", "open", "dikhao", "chalu", "start", "show", "کھولو", "دکھاؤ", "چالو"]):
             STATE["monster"] = True
             msg_d = "Monster face chalu ho gaya."
             msg_t = "مونسٹر فیس آن کر دیا گیا ہے۔" if lang == "UR" else "Monster face turned on."
@@ -1598,112 +2020,152 @@ async def chat(request: Request):
                 "monster": True,
             }
 
-    detail_words = [
-        "detail", "details", "tafseel", "tafsil", "mukammal", "poora", "pura",
-        "kahan", "kab", "waqt", "halaat", "halat", "nazool", "nuzool", "shaan",
-        "مکمل", "تفصیل", "حالات", "نزول",
-    ]
-    s_num, s_ay, e_ay, is_last = parse_quran_request(heard)
-    is_quran_play = any(w in low for w in [
-        "surah", "sura", "sury", "suraj", "quran", "tilawat", "recite", "recitation",
-        "سورہ", "سورة", "قرآن", "تلاوت", "सूरह", "कुरान"
-    ])
-
-    # 1) Full-Surah Tafseer / Tafheem-ul-Quran -> Real Human Voice MP3 (VBR clear quality)
-    if (
-        s_num is not None
-        and s_ay is None
-        and not is_follow_up_ayah_request(heard)
-        and (is_tafseer_only_request(heard) or s_num == 0)
-    ):
-        tafheem_mp3 = await fetch_tafheem_tafseer_mp3(s_num)
-        if tafheem_mp3:
-            append_history({
-                "u": heard,
-                "a": f"Played Tafheem-ul-Quran real human Tafseer MP3 for Surah {s_num}",
-                "surah_num": s_num if s_num > 0 else 1,
-                "last_ayah": None,
-            })
-            lbl = "TAFHEEM INTRO" if s_num == 0 else f"TAFHEEM {s_num:03d}"
-            return {
-                "action": "STREAM",
-                "lang": "UR",
-                "header": lbl,
-                "title": lbl,
-                "url": tafheem_mp3,
-                "voice": voice_code,
-                "volume": STATE["volume"],
-                "monster": STATE["monster"],
-            }
-
-    # 2) Full-Surah Urdu Translation -> Real Human Voice MP3 (Mishary + Maududi / Shamshad Ali Khan)
-    if (
-        s_num is not None
-        and s_num > 0
-        and s_ay is None
-        and not is_follow_up_ayah_request(heard)
-        and is_translation_request(heard)
-    ):
-        human_mp3 = await fetch_human_urdu_translation_mp3(s_num)
-        if human_mp3:
-            append_history({
-                "u": heard,
-                "a": f"Played real human Urdu translation MP3 for Surah {s_num}",
-                "surah_num": s_num,
-                "last_ayah": None,
-            })
-            return {
-                "action": "STREAM",
-                "lang": "UR",
-                "header": f"URDU {s_num:03d}",
-                "title": f"URDU {s_num:03d}",
-                "url": human_mp3,
-                "voice": voice_code,
-                "volume": STATE["volume"],
-                "monster": STATE["monster"],
-            }
-
-    # 3) Specific Ayah/Range or Follow-up -> Exact Maududi Translation + Tafheem-ul-Quran Tafseer
-    if s_num is not None and s_num > 0 and (is_tafseer_intent(heard) or is_follow_up_ayah_request(heard) or any(w in low for w in detail_words)):
-        hdr_title, audio_rel, summary_txt, actual_last_ay = await build_clean_tafseer_audio(
-            s_num, s_ay, e_ay, is_last, lang
-        )
-        append_history({
-            "u": heard,
-            "a": summary_txt[:360],
-            "surah_num": s_num,
-            "last_ayah": actual_last_ay,
-        })
-        full_audio_url = f"https://esp32-ai-voice.onrender.com{audio_rel}"
+    # 7) NAMAZ TIME before Quran routing (so 'Fajr ka waqt' NEVER opens Surah Fajr)
+    if is_namaz_query(heard_norm):
+        disp, tts = build_namaz_response(lang)
+        append_history({"u": heard_norm, "a": disp[:360], "surah_num": None, "last_ayah": None})
+        audio_url, total_ms = await make_tts_with_duration(tts, voice_code)
+        pages = build_synced_pages(disp, total_ms, lang)
         return {
-            "action": "STREAM",
+            "action": "SPEAK",
             "lang": lang,
-            "header": hdr_title,
-            "title": hdr_title,
-            "url": full_audio_url,
+            "header": "NAMAZ",
+            "heard": clean_ascii(heard_norm)[:16],
+            "display": disp,
+            "pages": pages,
+            "audio_url": audio_url,
             "voice": voice_code,
             "volume": STATE["volume"],
             "monster": STATE["monster"],
         }
 
-    # 4) Direct Tilawat -> Mishary Rashid Alafasy MP3
-    if is_quran_play:
-        num = s_num if (s_num and s_num > 0) else 1
-        append_history({"u": heard, "a": f"Played Surah {num}", "surah_num": num, "last_ayah": None})
-        stream_url = f"https://server8.mp3quran.net/afs/{num:03d}.mp3"
-        return {
-            "action": "STREAM",
-            "lang": "EN",
-            "header": f"SURAH {num:03d}",
-            "title": f"SURAH {num:03d}",
-            "url": stream_url,
-            "voice": voice_code,
-            "volume": STATE["volume"],
-            "monster": STATE["monster"],
-        }
+    # 8) QURAN ENGINE (All 114 Surahs + Part 1/2 + Exact Maududi Ayah Translation & Tafseer)
+    if not is_quran_info_question(heard_norm):
+        s_num, s_ay, e_ay, is_last = parse_quran_request(heard_norm)
+        req_part = detect_part_num(heard_norm)
+        q_lang = detect_quran_lang(heard_norm)
 
-    header, disp, tts = await generate_answer(heard, lang)
-    append_history({"u": heard, "a": disp[:360], "surah_num": s_num, "last_ayah": None})
+        if s_num is None and req_part == 2:
+            last_s, _ = get_last_quran_context()
+            if last_s in {2, 3, 4, 5, 6, 7}:
+                s_num = last_s
+
+        # 8a) Full-Surah Tafseer / Tafheem-ul-Quran -> Real Human Voice MP3 (Urdu)
+        if (
+            s_num is not None
+            and s_ay is None
+            and req_part == 1
+            and q_lang == "UR"
+            and not is_follow_up_ayah_request(heard_norm)
+            and (is_tafseer_only_request(heard_norm) or s_num == 0)
+        ):
+            tafheem_mp3 = await fetch_tafheem_tafseer_mp3(s_num)
+            if tafheem_mp3:
+                append_history({
+                    "u": heard_norm,
+                    "a": f"Played Tafheem-ul-Quran real human Tafseer MP3 for Surah {s_num}",
+                    "surah_num": s_num if s_num > 0 else 1,
+                    "last_ayah": None,
+                })
+                lbl = "TAFHEEM INTRO" if s_num == 0 else f"TAFHEEM {s_num:03d}"
+                return {
+                    "action": "STREAM",
+                    "lang": "UR",
+                    "header": lbl,
+                    "title": lbl,
+                    "url": tafheem_mp3,
+                    "voice": "UR-M",
+                    "volume": STATE["volume"],
+                    "monster": STATE["monster"],
+                }
+
+        # 8b) Full-Surah Urdu Translation -> Real Human Voice MP3 (Part 1 & Part 2 support)
+        if (
+            s_num is not None
+            and s_num > 0
+            and s_ay is None
+            and q_lang == "UR"
+            and not is_follow_up_ayah_request(heard_norm)
+            and (is_translation_request(heard_norm) or req_part == 2)
+        ):
+            human_mp3 = await fetch_human_urdu_translation_mp3(s_num, req_part)
+            if human_mp3:
+                append_history({
+                    "u": heard_norm,
+                    "a": f"Played real human Urdu translation MP3 for Surah {s_num} Part {req_part}",
+                    "surah_num": s_num,
+                    "last_ayah": None,
+                })
+                lbl = f"URDU {s_num:03d} P2" if (req_part == 2 and s_num in {2, 3, 4, 5, 6, 7}) else f"URDU {s_num:03d}"
+                return {
+                    "action": "STREAM",
+                    "lang": "UR",
+                    "header": lbl,
+                    "title": lbl,
+                    "url": human_mp3,
+                    "voice": "UR-M",
+                    "volume": STATE["volume"],
+                    "monster": STATE["monster"],
+                }
+
+        # 8c) Specific Ayah/Range, Follow-up, or Explicit English/Arabic Tafseer -> Exact Maududi + Tafseer
+        if s_num is not None and s_num > 0 and (s_ay is not None or is_tafseer_intent(heard_norm) or is_follow_up_ayah_request(heard_norm)):
+            q_voice = voice_code_for_lang(q_lang)
+            STATE["voice"] = q_voice
+            want_tafseer = is_tafseer_only_request(heard_norm) or not is_translation_request(heard_norm)
+            hdr_title, audio_rel, summary_txt, actual_last_ay = await build_clean_tafseer_audio(
+                s_num, s_ay, e_ay, is_last, q_lang, include_tafseer=want_tafseer
+            )
+            append_history({
+                "u": heard_norm,
+                "a": summary_txt[:360],
+                "surah_num": s_num,
+                "last_ayah": actual_last_ay,
+            })
+            full_audio_url = f"{_public_base_url(request)}{audio_rel}"
+            return {
+                "action": "STREAM",
+                "lang": q_lang,
+                "header": hdr_title,
+                "title": hdr_title,
+                "url": full_audio_url,
+                "voice": q_voice,
+                "volume": STATE["volume"],
+                "monster": STATE["monster"],
+            }
+
+        # 8d) Direct Tilawat -> Mishary Rashid Alafasy MP3
+        play_trigger = has_word(low, ["sunao", "sunawo", "sunaiye", "play", "recite", "recitation", "tilawat", "chala", "chalao", "lagao", "سناؤ", "سنائیں", "تلاوت", "چلاؤ", "لگاؤ", "सुनाओ"])
+        if s_num is not None and s_num > 0 and (play_trigger or word_count <= 4):
+            append_history({"u": heard_norm, "a": f"Played Surah {s_num}", "surah_num": s_num, "last_ayah": None})
+            stream_url = f"https://server8.mp3quran.net/afs/{s_num:03d}.mp3"
+            return {
+                "action": "STREAM",
+                "lang": "EN",
+                "header": f"SURAH {s_num:03d}",
+                "title": f"SURAH {s_num:03d}",
+                "url": stream_url,
+                "voice": voice_code,
+                "volume": STATE["volume"],
+                "monster": STATE["monster"],
+            }
+
+        if play_trigger and has_word(low, ["quran", "tilawat", "قرآن", "تلاوت", "कुरान"]):
+            append_history({"u": heard_norm, "a": "Played Surah 1", "surah_num": 1, "last_ayah": None})
+            return {
+                "action": "STREAM",
+                "lang": "EN",
+                "header": "SURAH 001",
+                "title": "SURAH 001",
+                "url": "https://server8.mp3quran.net/afs/001.mp3",
+                "voice": voice_code,
+                "volume": STATE["volume"],
+                "monster": STATE["monster"],
+            }
+
+    # 9) ALL-ROUNDER AI ANSWER
+    header, disp, tts = await generate_answer(heard_norm, lang)
+    append_history({"u": heard_norm, "a": disp[:360], "surah_num": None, "last_ayah": None})
     audio_url, total_ms = await make_tts_with_duration(tts, voice_code)
     pages = build_synced_pages(disp, total_ms, lang)
 
@@ -1711,7 +2173,7 @@ async def chat(request: Request):
         "action": "SPEAK",
         "lang": lang,
         "header": header,
-        "heard": clean_ascii(heard)[:16],
+        "heard": clean_ascii(heard_norm)[:16],
         "display": disp,
         "pages": pages,
         "audio_url": audio_url,
