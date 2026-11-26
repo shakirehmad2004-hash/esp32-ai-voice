@@ -658,7 +658,6 @@ def detect_language(text: str) -> str:
     if re.search(r"[\u0679\u0688\u0691\u06BA\u06D2\u06C1\u06C3\u06BE\u06AF\u067E\u0686\u0698\u06CC]", text):
         return "UR"
 
-    # Strictly non-English Urdu/Roman-Urdu markers so English sentences never flip to Urdu
     urdu_markers = {
         "کے", "کا", "کی", "میں", "ہے", "ہیں", "تھا", "بتاؤ", "بتائیں", "سناؤ", "سنائیں",
         "کیا", "کیسے", "آج", "کل", "کون", "کہاں", "نماز", "موسم", "خبریں", "تفسیر", "پہلی",
@@ -749,7 +748,7 @@ def replace_number_words(text: str) -> str:
     for word, val in NUMBER_WORDS.items():
         out = re.sub(rf"(?<!\w){re.escape(word)}(?!\w)", str(val), out)
     out = re.sub(r"\bdo\s+(?=(?:se|say|to|ayat|aayat|ayah)\b)", "2 ", out)
-    out = re.sub(r"(?<=(?:ayat|aayat|ayah|se|say|to)\s)do\b", "2", out)
+    out = re.sub(r"\b(ayat|aayat|ayah|se|say|to)\s+do\b", r"\1 2", out)
     return out
 
 
@@ -786,7 +785,6 @@ def parse_quran_request(text: str) -> Tuple[Optional[int], Optional[int], Option
     if not explicit_q and not follow_up:
         return None, None, None, False
 
-    # Strip part markers so 'part 2' or 'hissa 2' never gets misread as Surah/Ayah number
     rem = re.sub(
         r"\b(?:part|hissa|پارٹ|حصہ|पार्ट)\s*(?:1|2|one|two|ek|do)\b|\b(?:first|second|pehla|doosra|dusra)\s*(?:part|hissa)\b",
         " ",
