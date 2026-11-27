@@ -26,7 +26,7 @@ AUDIO_TTL_SEC = 900
 # Strictly Tafheem-ul-Quran (Syed Abul A'la Maududi) Real Human Audio Sources (All 114 Surahs)
 ARCHIVE_TAFHEEM_FULL_ID = "Tafheem-ul-Quran-by-Syed-Abul-Ala-Moududi-Audio-MP3-CD"
 ARCHIVE_TAFHEEM_SHORT_ID = "Tafheem-ul-Quran-by-Syed-Abul-Ala-Moududi-Urdu-Audio-MP3-CD"
-QURANURDU_MISHARI_PAGE = "[https://www.quranurdu.com/quran_mishari/](https://www.quranurdu.com/quran_mishari/)"
+QURANURDU_MISHARI_PAGE = "https://www.quranurdu.com/quran_mishari/"
 CUSTOM_SEERAT_ARCHIVE_ID = os.getenv("SEERAT_ARCHIVE_ID", "").strip()
 
 ARCHIVE_MAP_CACHE: Dict[str, Dict[int, str]] = {}
@@ -1105,7 +1105,7 @@ async def _load_archive_surah_map(item_id: str) -> Dict[int, str]:
     smap: Dict[int, str] = {}
     headers = {"User-Agent": "Mozilla/5.0 (compatible; ESP32Assistant/2.0)"}
     try:
-        meta_url = f"[https://archive.org/metadata/](https://archive.org/metadata/){item_id}"
+        meta_url = f"https://archive.org/metadata/{item_id}"
         async with httpx.AsyncClient(timeout=14.0, follow_redirects=True, headers=headers) as client:
             r = await client.get(meta_url)
             if r.status_code != 200:
@@ -1135,11 +1135,11 @@ async def _load_archive_surah_map(item_id: str) -> Dict[int, str]:
             for _, fname in mp3_entries:
                 n = _extract_surah_num_from_name(fname)
                 if n is not None and 0 <= n <= 114 and n not in smap:
-                    smap[n] = f"[https://archive.org/download/](https://archive.org/download/){item_id}/{urllib.parse.quote(fname, safe='/')}"
+                    smap[n] = f"https://archive.org/download/{item_id}/{urllib.parse.quote(fname, safe='/')}"
 
             if len(smap) < 50:
                 for m3u_name in m3u_names:
-                    m3u_url = f"[https://archive.org/download/](https://archive.org/download/){item_id}/{urllib.parse.quote(m3u_name, safe='/')}"
+                    m3u_url = f"https://archive.org/download/{item_id}/{urllib.parse.quote(m3u_name, safe='/')}"
                     mr = await client.get(m3u_url)
                     if mr.status_code == 200:
                         for ln in mr.text.splitlines():
@@ -1197,7 +1197,7 @@ def _natural_sort_key(fname: str) -> Tuple[int, str]:
 async def _load_seerat_archive_item(client: httpx.AsyncClient, item_id: str) -> Dict[int, str]:
     cmap: Dict[int, str] = {}
     try:
-        r = await client.get(f"[https://archive.org/metadata/](https://archive.org/metadata/){item_id}")
+        r = await client.get(f"https://archive.org/metadata/{item_id}")
         if r.status_code != 200:
             return cmap
         files = r.json().get("files", [])
@@ -1216,7 +1216,7 @@ async def _load_seerat_archive_item(client: httpx.AsyncClient, item_id: str) -> 
         if len(mp3s) >= 5:
             mp3s.sort(key=_natural_sort_key)
             for idx, fname in enumerate(mp3s, 1):
-                cmap[idx] = f"[https://archive.org/download/](https://archive.org/download/){item_id}/{urllib.parse.quote(fname, safe='/')}"
+                cmap[idx] = f"https://archive.org/download/{item_id}/{urllib.parse.quote(fname, safe='/')}"
     except Exception as ex:
         print(f"Seerat archive item error ({item_id}): {ex}")
     return cmap
@@ -1243,7 +1243,7 @@ async def fetch_seerat_archive_mp3(chapter_num: int) -> Optional[str]:
                     if len(candidate_ids) >= 6:
                         break
                     s_url = (
-                        "[https://archive.org/advancedsearch.php?q=](https://archive.org/advancedsearch.php?q=)"
+                        "https://archive.org/advancedsearch.php?q="
                         + urllib.parse.quote(sq)
                         + "&fl[]=identifier&sort[]=downloads+desc&rows=5&output=json"
                     )
@@ -1296,8 +1296,8 @@ async def fetch_maududi_verses(
     surah_num: int, start_ay: Optional[int], end_ay: Optional[int], is_last: bool
 ) -> Tuple[str, str, int, List[Tuple[int, str, str, str]], Optional[int]]:
     urls = [
-        f"[https://api.alquran.cloud/v1/surah/](https://api.alquran.cloud/v1/surah/){surah_num}/editions/quran-uthmani,ur.maududi,en.maududi",
-        f"[https://api.alquran.cloud/v1/surah/](https://api.alquran.cloud/v1/surah/){surah_num}/editions/quran-uthmani,ur.maududi,en.sahih",
+        f"https://api.alquran.cloud/v1/surah/{surah_num}/editions/quran-uthmani,ur.maududi,en.maududi",
+        f"https://api.alquran.cloud/v1/surah/{surah_num}/editions/quran-uthmani,ur.maududi,en.sahih",
     ]
     async with httpx.AsyncClient(timeout=12.0) as client:
         for url in urls:
@@ -1376,7 +1376,7 @@ async def get_available_groq_models(key: str) -> List[str]:
     try:
         async with httpx.AsyncClient(timeout=8.0) as client:
             r = await client.get(
-                "[https://api.groq.com/openai/v1/models](https://api.groq.com/openai/v1/models)",
+                "https://api.groq.com/openai/v1/models",
                 headers={"Authorization": f"Bearer {key}"},
             )
             if r.status_code == 200:
@@ -1410,7 +1410,7 @@ async def call_groq_pure_urdu_text(system_prompt: str, user_prompt: str, max_tok
             try:
                 async with httpx.AsyncClient(timeout=26.0) as client:
                     resp = await client.post(
-                        "[https://api.groq.com/openai/v1/chat/completions](https://api.groq.com/openai/v1/chat/completions)",
+                        "https://api.groq.com/openai/v1/chat/completions",
                         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
                         json={
                             "model": model,
@@ -1614,9 +1614,9 @@ async def fetch_rss_items(urls: List[str], limit: int = 5) -> List[str]:
 async def fetch_cricket_context(query: str) -> List[str]:
     q_extra = re.sub(r"\b(cricket|news|live|score|scores|match|aaj|ki|kya|hai|batao|sunao)\b", "", query, flags=re.I).strip()
     search_q = f"cricket live score match {q_extra}".strip()
-    gnews = f"[https://news.google.com/rss/search?q=](https://news.google.com/rss/search?q=){urllib.parse.quote(search_q)}&hl=en-IN&gl=IN&ceid=IN:en"
+    gnews = f"https://news.google.com/rss/search?q={urllib.parse.quote(search_q)}&hl=en-IN&gl=IN&ceid=IN:en"
     feeds = [
-        "[https://www.espncricinfo.com/rss/content/story/feeds/0.xml](https://www.espncricinfo.com/rss/content/story/feeds/0.xml)",
+        "https://www.espncricinfo.com/rss/content/story/feeds/0.xml",
         gnews,
     ]
     return await fetch_rss_items(feeds, limit=5)
@@ -1634,12 +1634,12 @@ async def fetch_news_context(query: str) -> List[str]:
     feeds: List[str] = []
     if cleaned and len(cleaned) >= 2:
         feeds.append(
-            f"[https://news.google.com/rss/search?q=](https://news.google.com/rss/search?q=){urllib.parse.quote(cleaned)}&hl=en-IN&gl=IN&ceid=IN:en"
+            f"https://news.google.com/rss/search?q={urllib.parse.quote(cleaned)}&hl=en-IN&gl=IN&ceid=IN:en"
         )
     feeds.extend([
-        "[https://news.google.com/rss?hl=en-IN&gl=IN&ceid=IN:en](https://news.google.com/rss?hl=en-IN&gl=IN&ceid=IN:en)",
-        "[https://feeds.bbci.co.uk/news/world/asia/rss.xml](https://feeds.bbci.co.uk/news/world/asia/rss.xml)",
-        "[https://www.aljazeera.com/xml/rss/all.xml](https://www.aljazeera.com/xml/rss/all.xml)",
+        "https://news.google.com/rss?hl=en-IN&gl=IN&ceid=IN:en",
+        "https://feeds.bbci.co.uk/news/world/asia/rss.xml",
+        "https://www.aljazeera.com/xml/rss/all.xml",
     ])
     return await fetch_rss_items(feeds, limit=5)
 
@@ -1667,7 +1667,7 @@ async def fetch_weather_info(query: str) -> Tuple[str, Optional[float], Optional
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 g = await client.get(
-                    f"[https://geocoding-api.open-meteo.com/v1/search?name=](https://geocoding-api.open-meteo.com/v1/search?name=){urllib.parse.quote(cand)}&count=1"
+                    f"https://geocoding-api.open-meteo.com/v1/search?name={urllib.parse.quote(cand)}&count=1"
                 )
                 if g.status_code == 200 and g.json().get("results"):
                     res = g.json()["results"][0]
@@ -1677,7 +1677,7 @@ async def fetch_weather_info(query: str) -> Tuple[str, Optional[float], Optional
 
     try:
         url = (
-            f"[https://api.open-meteo.com/v1/forecast?latitude=](https://api.open-meteo.com/v1/forecast?latitude=){lat}&longitude={lon}"
+            f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}"
             "&current=temperature_2m,wind_speed_10m&timezone=Asia%2FKolkata"
         )
         async with httpx.AsyncClient(timeout=7.0) as client:
@@ -1712,7 +1712,7 @@ async def call_groq_bilingual(system_prompt: str, user_prompt: str, lang: str, l
             "Write natural, everyday spoken Urdu — NEVER use robotic phrasing, awkward literal translations, or broken grammar.\n"
             "Reply using EXACTLY these two plain lines with NO markdown stars or extra text:\n"
             "DISPLAY: <Clean, accurate answer in Roman Urdu using A-Z and 0-9 only; NO Urdu script, NO DISPLAY/VOICE words>\n"
-            "VOICE: <Exact (اردو) (۔); Arabic DISPLAY/VOICE NO Urdu accurate answer clean, harakat, in natural proper punctuation same script with words>\n"
+            "VOICE: <Exact same clean, accurate answer in natural Urdu script (اردو) with proper punctuation (۔); NO Arabic harakat, NO DISPLAY/VOICE words>\n"
             f"{length_rule}\n"
             "Always resolve follow-ups using Conversation History."
         )
@@ -1740,7 +1740,7 @@ async def call_groq_bilingual(system_prompt: str, user_prompt: str, lang: str, l
             try:
                 async with httpx.AsyncClient(timeout=24.0) as client:
                     resp = await client.post(
-                        "[https://api.groq.com/openai/v1/chat/completions](https://api.groq.com/openai/v1/chat/completions)",
+                        "https://api.groq.com/openai/v1/chat/completions",
                         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
                         json={
                             "model": model,
@@ -1807,7 +1807,7 @@ async def wiki_fallback(query: str) -> Tuple[str, str]:
     try:
         async with httpx.AsyncClient(timeout=8.0, headers=headers) as client:
             s_url = (
-                "[https://en.wikipedia.org/w/api.php?action=query&list=search&srlimit=1&format=json&srsearch=](https://en.wikipedia.org/w/api.php?action=query&list=search&srlimit=1&format=json&srsearch=)"
+                "https://en.wikipedia.org/w/api.php?action=query&list=search&srlimit=1&format=json&srsearch="
                 + urllib.parse.quote(clean_q[:80])
             )
             sr = await client.get(s_url)
@@ -1817,7 +1817,7 @@ async def wiki_fallback(query: str) -> Tuple[str, str]:
                 if hits:
                     title = hits[0].get("title", clean_q)
 
-            url = f"[https://en.wikipedia.org/api/rest_v1/page/summary/](https://en.wikipedia.org/api/rest_v1/page/summary/){urllib.parse.quote(title)}"
+            url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{urllib.parse.quote(title)}"
             r = await client.get(url)
             if r.status_code == 200:
                 ext = (r.json().get("extract") or "").strip()
@@ -1851,7 +1851,7 @@ async def transcribe_wav(wav_bytes: bytes) -> str:
                     "temperature": "0",
                 }
                 resp = await client.post(
-                    "[https://api.groq.com/openai/v1/audio/transcriptions](https://api.groq.com/openai/v1/audio/transcriptions)",
+                    "https://api.groq.com/openai/v1/audio/transcriptions",
                     headers={"Authorization": f"Bearer {key}"},
                     files=files,
                     data=data,
@@ -1984,7 +1984,7 @@ def _public_base_url(request: Request) -> str:
     base = str(request.base_url).rstrip("/")
     if "onrender.com" in base and base.startswith("http://"):
         base = "https://" + base[len("http://"):]
-    return base or "[https://esp32-ai-voice.onrender.com](https://esp32-ai-voice.onrender.com)"
+    return base or "https://esp32-ai-voice.onrender.com"
 
 
 async def generate_answer(heard: str, lang: str) -> Tuple[str, str, str]:
@@ -2424,7 +2424,6 @@ async def chat(request: Request):
         en_title, ur_title, _ = SEERAT_CHAPTERS.get(ch_num, SEERAT_CHAPTERS[1])
         s_lang = "EN" if has_word(low, ["in english", "english mein"]) else "UR"
 
-        # If requested by chapter number in Urdu, try Archive.org human MP3 first; topic requests use exact chapter narration
         if s_lang == "UR" and not by_topic:
             archive_mp3 = await fetch_seerat_archive_mp3(ch_num)
             if archive_mp3:
@@ -2581,7 +2580,7 @@ async def chat(request: Request):
         play_trigger = has_word(low, ["sunao", "sunawo", "sunaiye", "play", "recite", "recitation", "tilawat", "tilawah", "tilaat", "chala", "chalao", "lagao", "سناؤ", "سنائیں", "تلاوت", "چلاؤ", "لگاؤ", "सुनाओ", "तिलावत"])
         if s_num is not None and s_num > 0 and (play_trigger or word_count <= 4):
             append_history({"u": heard_norm, "a": f"Played Surah {s_num}", "surah_num": s_num, "last_ayah": None})
-            stream_url = f"[https://server8.mp3quran.net/afs/](https://server8.mp3quran.net/afs/){s_num:03d}.mp3"
+            stream_url = f"https://server8.mp3quran.net/afs/{s_num:03d}.mp3"
             return {
                 "action": "STREAM",
                 "lang": "EN",
@@ -2600,7 +2599,7 @@ async def chat(request: Request):
                 "lang": "EN",
                 "header": "SURAH 001",
                 "title": "SURAH 001",
-                "url": "[https://server8.mp3quran.net/afs/001.mp3](https://server8.mp3quran.net/afs/001.mp3)",
+                "url": "https://server8.mp3quran.net/afs/001.mp3",
                 "voice": voice_code,
                 "volume": STATE["volume"],
                 "monster": STATE["monster"],
