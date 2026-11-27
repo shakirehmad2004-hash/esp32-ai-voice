@@ -327,7 +327,7 @@ URDU_TO_ROMAN_MAP = {
     "۔": ".", "،": ",", "؟": "?", "؛": ";",
 }
 
-# Targeted Urdu TTS pronunciation fixes for ur-PK-AsadNeural (fixes mispronounced words heard in testing)
+# Targeted Urdu TTS pronunciation fixes for ur-PK-AsadNeural
 URDU_PRONUNCIATION_RULES: List[Tuple[str, str]] = [
     (r"(?<!\w)مکی(?!\w)", "مَکّی"),
     (r"(?<!\w)مومن(?!\w)", "مؤمِن"),
@@ -532,16 +532,14 @@ def clean_ascii(text: str) -> str:
 def clean_urdu_for_tts(text: str, keep_clock_colons: bool = False) -> str:
     s = strip_think_tags(text)
     s = re.sub(r"\b(?:DISPLAY|VOICE)\s*:\s*", "", s, flags=re.I)
-    # Prevent Edge-TTS Urdu from reading Surah:Ayah like 2:43 as "2 baj kar 43 minute"
-    if not keep_clock_colons:
-        s = re.sub(r"[\(\[]?\b(\d{1,3})\s*:\s*(\d{1,3})\b[\)\]]?", r" سورہ \1 آیت \2 ", s)
+    # Convert colon times like 5:30 or 12:45 into natural Urdu speech (never "Surah Ayah")
+    s = re.sub(r"\b(\d{1,2})\s*:\s*(\d{2})\b", r"\1 بج کر \2 منٹ", s)
     s = re.sub(r"[\(\[]\s*[\d\u0660-\u0669\u06F0-\u06F9]+\s*[\)\]]", "", s)
     s = re.sub(r"[\u064B-\u065F\u0670\u06D6-\u06ED\u0640]", "", s)
     s = s.replace("\u0671", "ا").replace("أ", "ا").replace("إ", "ا")
     s = s.replace("الله", "اللہ").replace("لله", "للہ")
     s = s.replace("(", " ").replace(")", " ").replace("[", " ").replace("]", " ")
     s = re.sub(r"[*_#`~•\"']+", "", s)
-    # Apply selective pronunciation diacritics AFTER stripping raw harakat
     for pat, repl in URDU_PRONUNCIATION_RULES:
         s = re.sub(pat, repl, s)
     s = re.sub(r"\s*،\s*،+", "، ", s)
@@ -868,7 +866,6 @@ def detect_language(text: str) -> str:
     if has_word(low, ["urdu mein", "in urdu", "hindi mein", "اردو میں"]):
         return "UR"
 
-    # Any Devanagari or Arabic/Urdu script -> URDU assistant (never Arabic voice)
     if re.search(r"[\u0900-\u097F\u0600-\u06FF]", text):
         return "UR"
 
@@ -936,9 +933,17 @@ def build_namaz_response(lang: str) -> Tuple[str, str]:
         f"Esha {fmt_12_short(e)}."
     )
     if lang == "UR":
+        f_h, f_m = divmod(f % 720 or 720, 60)
+        z_h, z_m = divmod(z % 720 or 720, 60)
+        a_h, a_m = divmod(a % 720 or 720, 60)
+        mg_h, mg_m = divmod(mg % 720 or 720, 60)
+        e_h, e_m = divmod(e % 720 or 720, 60)
         ur_tts = (
-            f"فجر {fmt_12_short(f)}۔ ظہر {fmt_12_short(z)}۔ "
-            f"عصر {fmt_12_short(a)}۔ مغرب {fmt_12_short(mg)}۔ عشاء {fmt_12_short(e)}۔"
+            f"فجر {f_h} بج کر {f_m:02d} منٹ۔ "
+            f"ظہر {z_h} بج کر {z_m:02d} منٹ۔ "
+            f"عصر {a_h} بج کر {a_m:02d} منٹ۔ "
+            f"مغرب {mg_h} بج کر {mg_m:02d} منٹ۔ "
+            f"عشاء {e_h} بج کر {e_m:02d} منٹ۔"
         )
         return disp, ur_tts
     return disp, disp
