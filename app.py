@@ -338,8 +338,8 @@ WEATHER_STOPWORDS = {
 }
 
 NEWS_STOPWORDS = {
-    "news", "khabar", "khabrein", "khabrai", "headlines", "live", "today", "aaj",
-    "ki", "ka", "ke", "taza", "latest", "breaking", "batao", "bataiye", "sunao",
+    "news", "khabar", "khabrein", "khabren", "khabrain", "khabrai", "khabaren", "headlines", "live", "today", "aaj",
+    "ki", "ka", "ke", "taza", "taaza", "latest", "breaking", "batao", "bataiye", "sunao",
     "sunawo", "tell", "me", "about", "what", "is", "the", "please", "abhi", "kya",
     "hai", "hain", "آج", "کی", "کا", "کے", "تازہ", "خبریں", "خبر", "سناؤ", "سنائیں",
     "بتاؤ", "بتائیں", "نیوز", "لائیو", "کیا", "ہے", "ہیں", "ابھی", "أخبار",
@@ -603,6 +603,35 @@ def format_urdu_period_and_time(now: datetime.datetime) -> str:
     return f"{period} کے {h12} بج کر {m} منٹ ہوئے ہیں"
 
 
+URDU_WEEKDAYS = {
+    "Monday": "پیر",
+    "Tuesday": "منگل",
+    "Wednesday": "بدھ",
+    "Thursday": "جمعرات",
+    "Friday": "جمعہ",
+    "Saturday": "ہفتہ",
+    "Sunday": "اتوار",
+}
+URDU_MONTHS = {
+    1: "جنوری",
+    2: "فروری",
+    3: "مارچ",
+    4: "اپریل",
+    5: "مئی",
+    6: "جون",
+    7: "جولائی",
+    8: "اگست",
+    9: "ستمبر",
+    10: "اکتوبر",
+    11: "نومبر",
+    12: "دسمبر",
+}
+
+
+def format_urdu_gregorian_date(now: datetime.datetime) -> str:
+    return f"{URDU_WEEKDAYS.get(now.strftime('%A'), '')}، {now.day} {URDU_MONTHS.get(now.month, '')} {now.year}"
+
+
 def strip_think_tags(text: str) -> str:
     return re.sub(r"<think>.*?(?:</think>|\Z)", "", text or "", flags=re.S).strip()
 
@@ -620,9 +649,9 @@ def clean_ascii(text: str) -> str:
 def clean_urdu_for_tts(text: str, keep_clock_colons: bool = False) -> str:
     s = strip_think_tags(text)
     s = re.sub(r"\b(?:DISPLAY|VOICE)\s*:\s*", "", s, flags=re.I)
-    # Never turn clock times into "Surah Ayat": always read H:MM as natural Urdu time
-    s = re.sub(r"\b(\d{1,2})\s*:\s*00\b", r"\1 بجے", s)
-    s = re.sub(r"\b(\d{1,2})\s*:\s*([0-5]\d)\b", r"\1 بج کر \2 منٹ", s)
+    if not keep_clock_colons:
+        s = re.sub(r"(?<!\d)(2[0-3]|[01]?\d)\s*:\s*00(?!\d)", r"\1 بجے", s)
+        s = re.sub(r"(?<!\d)(2[0-3]|[01]?\d)\s*:\s*([0-5]\d)(?!\d)", r"\1 بج کر \2 منٹ", s)
     s = re.sub(r"[\(\[]\s*[\d\u0660-\u0669\u06F0-\u06F9]+\s*[\)\]]", "", s)
     s = re.sub(r"[\u064B-\u065F\u0670\u06D6-\u06ED\u0640]", "", s)
     s = s.replace("\u0671", "ا").replace("أ", "ا").replace("إ", "ا")
@@ -790,8 +819,9 @@ def is_cricket_query(text: str) -> bool:
 
 def is_news_query(text: str) -> bool:
     return has_word(text, [
-        "news", "khabar", "khabrein", "khabrai", "headlines", "taza khabar",
-        "breaking news", "latest news", "خبر", "خبریں", "نیوز", "أخبار", "खबर", "खबरें", "न्यूज",
+        "news", "khabar", "khabrein", "khabren", "khabrain", "khabrai", "khabaren",
+        "headlines", "taza khabar", "taaza khabar", "breaking news", "latest news",
+        "خبر", "خبریں", "نیوز", "أخبار", "खबर", "खबरें", "न्यूज",
     ])
 
 
@@ -876,7 +906,8 @@ def is_islamic_masayil_query(text: str) -> bool:
         "roza", "roze", "ramzan", "ramadan", "sehri", "iftar", "iftari", "itikaf", "fidya", "kaffara", "kaffarah", "taraweeh", "tarawih",
         "zakat", "zakaat", "nisab", "nisaab", "sadaqah", "sadqa", "fitrana", "fitra", "ushr",
         "hajj", "umrah", "umra", "ihram", "tawaf", "sai", "qurbani", "udhiyah", "aqiqah", "aqiqa",
-        "nikah", "talaq", "khula", "iddat", "mehr", "mahr", "virasat", "wirasat", "miras", "inheritance",
+        "nikah", "talaq", "khula", "iddat", "mehr", "mahr", "virasat", "wirasat", "miras",
+        "islamic inheritance", "inheritance in islam", "inheritance under islam", "hanafi inheritance",
         "halal", "haram", "haraam", "makrooh", "makruh", "jaiz", "jayaz", "najaiz", "farz", "fard", "wajib", "sunnat", "sunnah", "nafil", "mustahab", "bidat", "bidah",
         "sood", "riba", "interest haram", "gunah", "sawab", "tauba", "tawbah", "istighfar", "zikr", "dhikr", "durood", "darood", "dua", "duain", "masnoon",
         "aqeedah", "aqeeda", "tawheed", "tauheed", "shirk", "risalat", "akhirat", "qiyamat", "barzakh", "jannat", "jahannam", "farishte", "malaika",
@@ -965,7 +996,7 @@ def parse_seerat_request(text: str) -> Tuple[bool, Optional[int], bool, bool]:
 def has_explicit_quran_context(text: str) -> bool:
     low = (text or "").lower()
     if has_word(low, [
-        "surah", "sura", "sury", "suraj", "surat", "suratul", "soorah", "soora",
+        "surah", "sura", "sury", "surat", "suratul", "soorah", "soora",
         "quran", "quraan", "tilawat", "tilawah", "tilaat", "recite", "recitation",
         "tafseer", "tafsir", "tafser", "tafheem", "tafhim", "maududi", "moududi", "modudi",
         "tarjuma", "tarjama", "ayat", "aayat", "ayah", "verse", "verses",
@@ -1047,7 +1078,7 @@ def detect_language(text: str) -> str:
         "batao", "bataiye", "sunao", "sunawo", "sunahu", "samjhao", "samjhaiye",
         "kaise", "kaisa", "kaisi", "aaj", "kal", "abhi", "kab", "kyun", "kyu", "kaun", "kahan",
         "kitna", "kitni", "kitne", "kisne", "kisko", "kise", "nahi", "nhi", "aur", "lekin",
-        "mausam", "mosam", "khabar", "khabrein", "khabrai", "tarjuma", "tarjama",
+        "mausam", "mosam", "khabar", "khabrein", "khabren", "khabrain", "khabrai", "tarjuma", "tarjama",
         "pehli", "pehla", "pehlay", "pehle", "chalu", "dikhao", "ruko", "awaaz", "karo", "kero",
         "mera", "meri", "mere", "mujhe", "aap", "tum", "ki", "ka", "ke", "se", "mein", "tak",
         "aagay", "agay", "agli", "agla", "halaat", "nazool", "nuzool", "dheere", "ahista", "tez",
@@ -1067,6 +1098,10 @@ def detect_quran_lang(text: str) -> str:
     if has_word(text, ["in english", "english mein", "english translation", "english tafseer", "انگریزی میں"]):
         return "EN"
     return "UR"
+
+
+def voice_code_for_lang(lang: str) -> str:
+    return "EN-M" if lang == "EN" else "UR-M"
 
 
 def fmt_12_short(mins: int) -> str:
@@ -1183,7 +1218,7 @@ def parse_quran_request(text: str) -> Tuple[Optional[int], Optional[int], Option
     )
 
     surah_num = None
-    m_surah = re.search(r"(?<!\w)(?:surah|sura|sury|suraj|surat|suratul|soorah|soora|سوره|سورہ|سورۃ|سورة|सूरह)\s*(?:number|num\.?|no\.?|نمبر|نंबर)?\s*(\d{1,3})(?!\w)", rem)
+    m_surah = re.search(r"(?<!\w)(?:surah|sura|sury|surat|suratul|soorah|soora|سوره|سورہ|سورۃ|سورة|सूरह)\s*(?:number|num\.?|no\.?|نمبر|نंबर)?\s*(\d{1,3})(?!\w)", rem)
     if m_surah:
         surah_num = max(1, min(114, int(m_surah.group(1))))
         rem = rem[:m_surah.start()] + " " + rem[m_surah.end():]
@@ -1610,45 +1645,60 @@ async def call_groq_pure_urdu_text(system_prompt: str, user_prompt: str, max_tok
 
 
 async def build_seerat_chapter_narration_mp3(chapter_num: int, lang: str) -> Tuple[str, str, int, str]:
-    en_title, ur_title, _ = SEERAT_CHAPTERS.get(chapter_num, SEERAT_CHAPTERS[1])
-    cache_fid = f"seerat_ch{chapter_num:02d}_{lang.lower()}"
+    """Bounded, original chapter narration for synchronous ESP32; sentinel denotes failure."""
+    if chapter_num not in SEERAT_CHAPTERS:
+        chapter_num = 1
+    lang = "EN" if lang == "EN" else "UR"
+    en_title, ur_title, _ = SEERAT_CHAPTERS[chapter_num]
+    cache_fid = f"seerat_v3_ch{chapter_num:02d}_{lang.lower()}"
     cache_path = os.path.join(AUDIO_DIR, f"{cache_fid}.mp3")
-
     if os.path.exists(cache_path) and os.path.getsize(cache_path) > 2000:
         with open(cache_path, "rb") as f:
-            b = f.read()
-        exact_ms = get_mp3_duration_ms(b) or int((len(b) / 6000.0) * 1000)
-        return f"SEERAT CH{chapter_num:02d}", f"/audio/{cache_fid}.mp3", exact_ms, f"Ar-Raheeq Al-Makhtum Ch {chapter_num}: {en_title}"
+            audio = f.read()
+        title = en_title if lang == "EN" else ur_title
+        return f"SEERAT CH{chapter_num:02d}", f"/audio/{cache_fid}.mp3", get_mp3_duration_ms(audio) or int(len(audio) / 6), title
 
-    if lang == "EN":
-        sys_p = (
-            "You are narrating an authentic topic-wise audiobook chapter strictly from ONE book: "
-            "Ar-Raheeq Al-Makhtum (The Sealed Nectar) by Safi-ur-Rahman al-Mubarakpuri. "
-            "Write 12 to 15 clear, flowing, easy-to-understand English sentences covering the exact authentic historical events and lessons of this topic. "
-            "No headings, no bullet points, no markdown, no extra filler."
-        )
-        usr_p = f"Ar-Raheeq Al-Makhtum, Topic {chapter_num}: {en_title}."
-        res = await call_groq_bilingual(sys_p, usr_p, "EN", "long")
-        body = res[1] if res else f"Topic {chapter_num} from Ar-Raheeq Al-Makhtum covers {en_title}."
-        script = f"Ar-Raheeq Al-Makhtum. Chapter {chapter_num}, {en_title}. {body}"
-        url, total_ms = await make_tts_with_duration(script, "EN-M", fixed_fid=cache_fid)
-        return f"SEERAT CH{chapter_num:02d}", url, total_ms, script
-
-    sys_p = (
-        "آپ صرف ایک مستند کتاب الرحیق المختوم از مولانا صفی الرحمن مبارکپوری کے مطابق سیرت النبی صلی اللہ علیہ وسلم کا موضوع وار آڈیو باب بیان کر رہے ہیں۔\n"
-        "سخت اصول:\n"
-        "1) پورا بیان صرف خالص، سلیس، بامحاورہ اردو رسم الخط میں ہو۔ ایک بھی انگریزی لفظ، ہندی لفظ، ہیڈنگ، نمبر یا بلٹ پوائنٹ نہ لکھیں۔\n"
-        "2) صرف الرحیق المختوم کے مطابق اس موضوع کے مستند تاریخی واقعات، پسِ منظر اور عملی سبق 12 سے 15 صاف جملوں میں بیان کریں۔\n"
-        "3) کوئی غیر مستند قصہ یا فالتو تمہید شامل نہ کریں۔ عربی اعراب نہ لگائیں اور اللہ کو اردو ہ کے ساتھ لکھیں۔"
+    timeout_msg = (
+        "The Seerat chapter could not be prepared in time. Please retry."
+        if lang == "EN"
+        else "سیرت کا باب مقررہ وقت میں تیار نہیں ہو سکا۔ دوبارہ کوشش کریں۔"
     )
-    usr_p = f"الرحیق المختوم، باب نمبر {chapter_num}، موضوع: {ur_title}۔ اس باب کو مکمل اور مستند انداز میں بیان کریں۔"
-    narration = await call_groq_pure_urdu_text(sys_p, usr_p, max_tokens=1700)
-    if not narration:
-        narration = f"یہ کتاب الرحیق المختوم کا باب نمبر {chapter_num} ہے جس کا موضوع {ur_title} ہے۔"
-
-    script = f"الرحیق المختوم، سیرت النبی صلی اللہ علیہ وسلم۔ باب نمبر {chapter_num}، {ur_title}۔ {narration}"
-    url, total_ms = await make_tts_with_duration(script, "UR-M", fixed_fid=cache_fid)
-    return f"SEERAT CH{chapter_num:02d}", url, total_ms, script
+    try:
+        if lang == "EN":
+            sys_p = (
+                "Write an accurate, original Seerah study narration in 12 to 16 short, clear spoken-English sentences. "
+                "Cover essential setting, chronology, people, outcome, and lessons; do not invent quotations, dates, or disputed claims. "
+                "This is a concise paraphrase based on Ar-Raheeq Al-Makhtum, not verbatim text. No headings or filler."
+            )
+            user_p = f"Chapter {chapter_num}: {en_title}. Explain the essential topic for a learner."
+            res = await asyncio.wait_for(call_groq_bilingual(sys_p, user_p, "EN", "chapter"), timeout=14.0)
+            body = res[1].strip() if res and len(res) > 1 else ""
+            if not body:
+                return f"SEERAT CH{chapter_num:02d}", "", 0, "__SEERAT_ERROR__:The detailed chapter is unavailable right now. Please retry."
+            script = f"Seerah study narration. Chapter {chapter_num}: {en_title}. {body}"
+            voice = "EN-M"
+        else:
+            sys_p = (
+                "سیرت پر 12 سے 16 مختصر، واضح اور رواں جملوں میں اصل تعلیمی خلاصہ لکھیں۔ بنیادی تاریخی پس منظر، ترتیب، شخصیات، نتیجہ اور سبق بیان کریں۔ "
+                "غیر ثابت اقوال، تاریخیں یا اختلافی باتیں قطعی انداز میں نہ کہیں۔ یہ الرحیق المختوم کے مطالعے پر مبنی خلاصہ ہے، اصل کتاب کا لفظ بہ لفظ مکمل متن نہیں۔ "
+                "صرف سلیس اردو رسم الخط، بغیر عنوان، انگریزی یا غیر ضروری تمہید۔"
+            )
+            user_p = f"سیرت کا باب {chapter_num}، موضوع {ur_title}۔ سیکھنے والے کے لیے ضروری باتیں بیان کریں۔"
+            body = await asyncio.wait_for(call_groq_pure_urdu_text(sys_p, user_p, max_tokens=1400), timeout=14.0)
+            if not body:
+                return f"SEERAT CH{chapter_num:02d}", "", 0, "__SEERAT_ERROR__:تفصیلی باب ابھی دستیاب نہیں۔ تھوڑی دیر بعد دوبارہ کوشش کریں۔"
+            script = f"سیرت کا تعلیمی خلاصہ، باب نمبر {chapter_num}، {ur_title}۔ {body}"
+            voice = "UR-M"
+        audio_rel, duration = await asyncio.wait_for(make_tts_with_duration(script, voice, fixed_fid=cache_fid), timeout=12.0)
+        if not audio_rel:
+            err = "Audio generation failed; please retry." if lang == "EN" else "آڈیو تیار نہیں ہو سکی۔ دوبارہ کوشش کریں۔"
+            return f"SEERAT CH{chapter_num:02d}", "", 0, "__SEERAT_ERROR__:" + err
+        return f"SEERAT CH{chapter_num:02d}", audio_rel, duration, script
+    except asyncio.TimeoutError:
+        return f"SEERAT CH{chapter_num:02d}", "", 0, "__SEERAT_ERROR__:" + timeout_msg
+    except Exception as exc:
+        print(f"Seerat chapter {chapter_num} generation failed: {type(exc).__name__}: {exc}")
+        return f"SEERAT CH{chapter_num:02d}", "", 0, "__SEERAT_ERROR__:" + timeout_msg
 
 
 async def build_exact_tafheem_ayah_audio(
@@ -1752,61 +1802,82 @@ async def build_exact_tafheem_ayah_audio(
     return hdr, url, total_ms, script, build_synced_pages(script, total_ms, "EN"), actual_last_ayah
 
 
-def voice_code_for_lang(lang: str) -> str:
-    return "EN-M" if lang == "EN" else "UR-M"
-
-
 async def fetch_rss_items(urls: List[str], limit: int = 5) -> List[str]:
-    items: List[str] = []
-    headers = {"User-Agent": "Mozilla/5.0 (compatible; ESP32Assistant/2.0)"}
-    async with httpx.AsyncClient(timeout=7.0, follow_redirects=True, headers=headers) as client:
-        for u in urls:
+    """Fetch feeds concurrently, preserve Urdu/Arabic Unicode, deduplicate by title, and interleave feeds."""
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; ESP32Assistant/2.3)"}
+    async with httpx.AsyncClient(timeout=httpx.Timeout(6.0, connect=3.0), follow_redirects=True, headers=headers) as client:
+        async def fetch_one(url: str) -> List[str]:
             try:
-                r = await client.get(u)
-                if r.status_code != 200:
-                    continue
-                root = ET.fromstring(r.content)
-                for item in root.findall(".//item"):
-                    title = (item.findtext("title") or "").strip()
-                    pub = (item.findtext("pubDate") or "").strip()
+                resp = await client.get(url)
+                resp.raise_for_status()
+                if len(resp.content) > 2_000_000:
+                    return []
+                root = ET.fromstring(resp.content)
+                entries = root.findall(".//item")
+                if not entries:
+                    entries = [e for e in root.iter() if e.tag.rsplit("}", 1)[-1] == "entry"]
+                found = []
+                for entry in entries:
+                    vals = {e.tag.rsplit("}", 1)[-1]: (e.text or "").strip() for e in entry.iter()}
+                    title = re.sub(r"<[^>]*>", "", vals.get("title", ""))
+                    title = re.sub(r"\s+", " ", title).strip()
+                    pub = vals.get("pubDate") or vals.get("published") or vals.get("updated") or ""
                     if title:
-                        clean_t = re.sub(r"\s+", " ", title)
-                        items.append(f"{clean_t} ({pub[:16]})" if pub else clean_t)
-                    if len(items) >= limit:
-                        return items
-            except Exception as ex:
-                print(f"RSS error ({u}): {ex}")
-    return items
+                        found.append(f"{title} ({pub[:16]})" if pub else title)
+                return found
+            except Exception as exc:
+                print(f"RSS feed unavailable ({url}): {type(exc).__name__}: {exc}")
+                return []
+        batches = await asyncio.gather(*(fetch_one(url) for url in urls))
+
+    def dedupe_key(item: str) -> str:
+        title = re.sub(r"\s+\([^()]*\)$", "", item).casefold()
+        return " ".join("".join(ch if ch.isalnum() else " " for ch in title).split())
+
+    merged, seen = [], set()
+    max_items = max(1, min(limit, 20))
+    for idx in range(max((len(batch) for batch in batches), default=0)):
+        for batch in batches:
+            if idx >= len(batch):
+                continue
+            item = batch[idx]
+            key = dedupe_key(item)
+            if key and key not in seen:
+                seen.add(key)
+                merged.append(item)
+                if len(merged) >= max_items:
+                    return merged
+    return merged
 
 
-async def fetch_cricket_context(query: str) -> List[str]:
-    q_extra = re.sub(r"\b(cricket|news|live|score|scores|match|aaj|ki|kya|hai|batao|sunao)\b", "", query, flags=re.I).strip()
-    search_q = f"cricket live score match {q_extra}".strip()
-    gnews = f"https://news.google.com/rss/search?q={urllib.parse.quote(search_q)}&hl=en-IN&gl=IN&ceid=IN:en"
-    feeds = [
+async def fetch_cricket_context(query: str, lang: str = "UR") -> List[str]:
+    q = (query or "").strip()
+    q = re.sub(r"\b(cricket|news|live|score|scores|match|aaj|ki|kya|hai|batao|bataiye|sunao|sunawo)\b", " ", q, flags=re.I)
+    q = re.sub(r"(?:کرکٹ|خبر|خبریں|لائیو|اسکور|سکور|میچ|آج|کی|کیا|ہے|بتاؤ|بتائیں|سناؤ|سنائیں)", " ", q)
+    q = re.sub(r"\s+", " ", q).strip()
+    has_urdu_script = bool(re.search(r"[\u0600-\u06FF]", q))
+    hl, gl, ceid = ("ur", "IN", "IN:ur") if has_urdu_script else ("en-IN", "IN", "IN:en")
+    search_q = ("کرکٹ لائیو اسکور " + q) if has_urdu_script else ("cricket live score match " + q)
+    gnews = f"https://news.google.com/rss/search?q={urllib.parse.quote(search_q.strip())}&hl={hl}&gl={gl}&ceid={ceid}"
+    return await fetch_rss_items([
         "https://www.espncricinfo.com/rss/content/story/feeds/0.xml",
         gnews,
-    ]
-    return await fetch_rss_items(feeds, limit=5)
+    ], limit=5)
 
 
 async def fetch_news_context(query: str, lang: str = "UR") -> List[str]:
     toks = re.findall(r"[\w\u0600-\u06FF\u0900-\u097F]+", (query or "").lower())
     topic_toks = [t for t in toks if t not in NEWS_STOPWORDS and len(t) >= 2]
     topic = " ".join(topic_toks).strip()
-
+    is_urdu = lang == "UR" or bool(re.search(r"[\u0600-\u06FF]", query or ""))
     feeds: List[str] = []
     if topic:
-        if re.search(r"[\u0600-\u06FF]", topic):
-            feeds.append(f"https://news.google.com/rss/search?q={urllib.parse.quote(topic)}&hl=ur&gl=IN&ceid=IN:ur")
-        else:
-            feeds.append(f"https://news.google.com/rss/search?q={urllib.parse.quote(topic)}&hl=en-IN&gl=IN&ceid=IN:en")
-
-    if lang == "UR":
+        hl, gl, ceid = ("ur", "IN", "IN:ur") if is_urdu else ("en-IN", "IN", "IN:en")
+        feeds.append(f"https://news.google.com/rss/search?q={urllib.parse.quote(topic)}&hl={hl}&gl={gl}&ceid={ceid}")
+    if is_urdu:
         feeds.extend([
             "https://feeds.bbci.co.uk/urdu/rss.xml",
-            "https://news.google.com/rss?hl=en-IN&gl=IN&ceid=IN:en",
-            "https://www.aljazeera.com/xml/rss/all.xml",
+            "https://news.google.com/rss?hl=ur&gl=IN&ceid=IN:ur",
         ])
     else:
         feeds.extend([
@@ -1902,6 +1973,13 @@ async def call_groq_bilingual(system_prompt: str, user_prompt: str, lang: str, l
     if length_mode == "brief":
         length_rule = "LENGTH MODE: BRIEF. Give a short, crisp, direct answer in 1 to 2 sentences."
         max_tokens = 360
+    elif length_mode == "chapter":
+        length_rule = (
+            "CHAPTER MODE: Create a clear, original, carefully bounded lesson narration in 12 to 16 sentences. "
+            "Cover the essential historical setting, chronological events, key people, outcomes, and lessons. "
+            "Do not claim verbatim quotation or invent unsupported details. Keep the response concise for a voice device."
+        )
+        max_tokens = 1300
     elif length_mode == "long":
         length_rule = "LENGTH MODE: DETAILED. Give a thorough, clear, well-structured answer in 6 to 8 natural sentences."
         max_tokens = 1500
@@ -1965,19 +2043,21 @@ async def call_groq_bilingual(system_prompt: str, user_prompt: str, lang: str, l
                                 disp = clean_ascii(m_disp.group(1))
                                 voice = clean_urdu_for_tts(clean_voice_script(m_voice.group(1)))
                                 if voice:
-                                    if len(disp) < 4:
+                                    if len(re.sub(r"[^A-Za-z]", "", disp)) < 3:
                                         disp = urdu_to_roman_fallback(voice)
                                     return disp, voice
                             voice_only = clean_urdu_for_tts(clean_voice_script(raw_clean_md))
-                            if voice_only:
-                                disp_fb = clean_ascii(voice_only)
-                                if len(disp_fb) < 4:
-                                    disp_fb = urdu_to_roman_fallback(voice_only)
-                                return disp_fb, voice_only
-
-                        en_clean = clean_ascii(raw_clean_md)
-                        if en_clean:
-                            return en_clean, en_clean
+                            ur_chars = len(re.findall(r"[\u0600-\u06FF]", voice_only))
+                            meaningful_words = re.findall(r"[A-Za-z]{2,}", voice_only)
+                            if ur_chars >= 3 or len(meaningful_words) >= 4:
+                                disp_fb = urdu_to_roman_fallback(voice_only) if ur_chars >= 3 else clean_ascii(voice_only)
+                                if len(re.sub(r"[^A-Za-z]", "", disp_fb)) >= 3:
+                                    return disp_fb, voice_only
+                            continue
+                        else:
+                            en_clean = clean_ascii(raw_clean_md)
+                            if en_clean:
+                                return en_clean, en_clean
 
                     print(f"Groq {model} ({resp.status_code}): {resp.text[:160]}")
             except Exception as ex:
@@ -1985,23 +2065,30 @@ async def call_groq_bilingual(system_prompt: str, user_prompt: str, lang: str, l
     return None
 
 
-async def wiki_fallback(query: str) -> Tuple[str, str]:
+async def wiki_fallback(query: str, lang: str = "EN") -> Tuple[str, str]:
+    """Use language-matched Wikipedia; never send English output to an Urdu voice."""
+    is_urdu = lang == "UR"
+    raw_q = (query or "").strip()
+    if is_urdu and not re.search(r"[\u0600-\u06FF]", raw_q):
+        disp = "Abhi AI server masroof hai. Thodi der baad dobara koshish karein."
+        msg = "ابھی اے آئی سرور مصروف ہے۔ تھوڑی دیر بعد دوبارہ کوشش کریں۔"
+        return disp, msg
+
     clean_q = re.sub(
         r"\b(kya|hai|hain|he|ka|ki|ke|what|is|are|who|tell|me|about|batao|bataiye|sunao|maloomat)\b",
         "",
-        query,
+        raw_q,
         flags=re.I,
     ).strip()
-    clean_q = clean_ascii(clean_q) or clean_ascii(query)
     if not clean_q:
-        msg = "Abhi AI server busy hai. Thodi der baad dobara poochein."
-        return msg, "ابھی اے آئی سرور مصروف ہے۔ تھوڑی دیر بعد دوبارہ پوچھیں۔"
+        clean_q = raw_q
 
-    headers = {"User-Agent": "ESP32VoiceAssistant/2.0"}
+    lang_code = "ur" if is_urdu else "en"
+    headers = {"User-Agent": "ESP32VoiceAssistant/2.3"}
     try:
-        async with httpx.AsyncClient(timeout=8.0, headers=headers) as client:
+        async with httpx.AsyncClient(timeout=6.0, headers=headers) as client:
             s_url = (
-                "https://en.wikipedia.org/w/api.php?action=query&list=search&srlimit=1&format=json&srsearch="
+                f"https://{lang_code}.wikipedia.org/w/api.php?action=query&list=search&srlimit=1&format=json&srsearch="
                 + urllib.parse.quote(clean_q[:80])
             )
             sr = await client.get(s_url)
@@ -2010,20 +2097,26 @@ async def wiki_fallback(query: str) -> Tuple[str, str]:
                 hits = sr.json().get("query", {}).get("search", [])
                 if hits:
                     title = hits[0].get("title", clean_q)
-
-            url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{urllib.parse.quote(title)}"
+            url = f"https://{lang_code}.wikipedia.org/api/rest_v1/page/summary/{urllib.parse.quote(title)}"
             r = await client.get(url)
             if r.status_code == 200:
-                ext = (r.json().get("extract") or "").strip()
-                if ext:
-                    sents = re.split(r"(?<=[.!?])\s+", ext)
-                    ans = clean_ascii(" ".join(sents[:3]))[:360]
-                    if ans:
-                        return ans, ans
+                extract = (r.json().get("extract") or "").strip()
+                if extract:
+                    sents = re.split(r"(?<=[.!?؟۔])\s+", extract)
+                    raw = "۔ ".join(sents[:3]) if is_urdu else " ".join(sents[:3])
+                    if is_urdu:
+                        return urdu_to_roman_fallback(raw)[:360], raw[:700]
+                    ans = clean_ascii(raw)[:360]
+                    return ans, ans
     except Exception as ex:
-        print(f"Wiki fallback error: {ex}")
-    msg = "Abhi AI server busy hai. Thodi der baad dobara poochein."
-    return msg, "ابھی اے آئی سرور مصروف ہے۔ تھوڑی دیر بعد دوبارہ پوچھیں۔"
+        print(f"Wiki fallback error: {type(ex).__name__}: {ex}")
+
+    if is_urdu:
+        disp = "Abhi AI server masroof hai. Thodi der baad dobara koshish karein."
+        msg = "ابھی اے آئی سرور مصروف ہے۔ تھوڑی دیر بعد دوبارہ کوشش کریں۔"
+        return disp, msg
+    msg = "The information service is temporarily unavailable. Please try again shortly."
+    return msg, msg
 
 
 async def transcribe_wav(wav_bytes: bytes) -> str:
@@ -2086,9 +2179,11 @@ async def make_tts_with_duration(
     fixed_fid: Optional[str] = None,
 ) -> Tuple[str, int]:
     """STRICTLY LOCKED to ONLY ur-PK-AsadNeural (UR-M) and en-IN-PrabhatNeural (EN-M)."""
+    voice_code = "EN-M" if voice_code == "EN-M" else "UR-M"
     fid = fixed_fid or uuid.uuid4().hex[:10]
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", fid):
+        return "", 2200
     out_path = os.path.join(AUDIO_DIR, f"{fid}.mp3")
-    locked_voice = VOICE_CANDIDATES["EN-M"][0] if voice_code == "EN-M" else VOICE_CANDIDATES["UR-M"][0]
 
     if STATE["speed"] == "Norm":
         rate = "-6%" if voice_code == "EN-M" else "-4%"
@@ -2100,42 +2195,50 @@ async def make_tts_with_duration(
     else:
         clean_text = clean_urdu_for_tts(clean_voice_script(text), keep_clock_colons=keep_clock_colons) or "جی بتائیے۔"
 
-    audio_bytes = b""
-    last_end_ms = 0
-
-    for attempt in range(1, 5):
-        try:
-            audio_bytes, last_end_ms = await _run_edge_tts_once(clean_text, locked_voice, rate)
-            if len(audio_bytes) >= 800:
-                break
-        except Exception as ex:
-            print(f"Locked TTS attempt {attempt} ({locked_voice}) error: {ex}")
-        await asyncio.sleep(0.35)
+    audio_bytes, last_end_ms, selected_voice = b"", 0, ""
+    candidates = VOICE_CANDIDATES.get(voice_code, [])
+    for voice in candidates:
+        for attempt in range(1, 5):
+            try:
+                candidate_bytes, candidate_end_ms = await _run_edge_tts_once(clean_text, voice, rate)
+                if len(candidate_bytes) >= 800:
+                    audio_bytes, last_end_ms, selected_voice = candidate_bytes, candidate_end_ms, voice
+                    break
+            except Exception as ex:
+                print(f"TTS attempt {attempt} ({voice}) failed: {type(ex).__name__}: {ex}")
+            await asyncio.sleep(0.25)
+        if audio_bytes:
+            break
 
     if len(audio_bytes) < 800:
-        print(f"Locked TTS failed on all retries ({locked_voice})")
+        print(f"TTS unavailable for {voice_code}; all retries failed.")
         return "", max(2200, len(clean_text) * 55)
 
-    with open(out_path, "wb") as f:
-        f.write(audio_bytes)
+    try:
+        with open(out_path, "wb") as f:
+            f.write(audio_bytes)
+    except OSError as ex:
+        print(f"TTS file write failed: {type(ex).__name__}: {ex}")
+        return "", max(2200, len(clean_text) * 55)
 
-    # Exact MP3 frame duration so OLED NEVER outruns audio or cuts playback short
     exact_mp3_ms = get_mp3_duration_ms(audio_bytes)
     fallback_ms = int((len(audio_bytes) / 6000.0) * 1000)
     total_ms = max(1200, exact_mp3_ms, last_end_ms, fallback_ms) + 400
-    print(f"TTS [locked] voice={locked_voice} rate={rate} bytes={len(audio_bytes)} mp3_ms={exact_mp3_ms} boundary_ms={last_end_ms} final_ms={total_ms}")
+    print(f"TTS [locked] voice={selected_voice} rate={rate} bytes={len(audio_bytes)} mp3_ms={exact_mp3_ms} final_ms={total_ms}")
 
     now_t = time.time()
-    for fn in os.listdir(AUDIO_DIR):
-        if fn.startswith("seerat_"):
-            continue
-        fp = os.path.join(AUDIO_DIR, fn)
-        try:
-            if os.path.isfile(fp) and now_t - os.path.getmtime(fp) > AUDIO_TTL_SEC:
-                os.remove(fp)
-        except Exception:
-            pass
-
+    try:
+        for fn in os.listdir(AUDIO_DIR):
+            if fn.startswith("seerat_"):
+                continue
+            fp = os.path.join(AUDIO_DIR, fn)
+            try:
+                if os.path.isfile(fp) and now_t - os.path.getmtime(fp) > AUDIO_TTL_SEC:
+                    os.remove(fp)
+            except OSError:
+                pass
+    except OSError as ex:
+        print(f"Audio cleanup skipped: {type(ex).__name__}: {ex}")
     return f"/audio/{fid}.mp3", total_ms
 
 
@@ -2185,6 +2288,24 @@ def _public_base_url(request: Request) -> str:
     return base or "https://esp32-ai-voice.onrender.com"
 
 
+def urdu_place_name(place: str) -> str:
+    aliases = {
+        "shopian": "شوپیاں", "shopiyan": "شوپیاں", "pinjoora, shopian": "پنجورہ، شوپیاں", "pinjoora": "پنجورہ",
+        "srinagar": "سرینگر", "pulwama": "پلوامہ", "anantnag": "اننت ناگ", "kulgam": "کلگام",
+        "baramulla": "بارہمولہ", "budgam": "بڈگام", "kupwara": "کپواڑہ", "bandipora": "بانڈی پورہ",
+        "ganderbal": "گاندربل", "pahalgam": "پہلگام", "gulmarg": "گلمرگ", "jammu": "جموں", "kashmir": "کشمیر",
+    }
+    return aliases.get((place or "").strip().casefold(), place)
+
+
+def headline_fallback(headlines: List[str], lang: str) -> Tuple[str, str]:
+    raw = "۔ ".join(x.strip() for x in headlines[:2] if x.strip())
+    if lang == "UR":
+        return urdu_to_roman_fallback(raw)[:300], raw[:700]
+    clean = clean_ascii(raw)[:300]
+    return clean, clean
+
+
 async def generate_answer(heard: str, lang: str) -> Tuple[str, str, str, bool]:
     """Returns (header, display_text, tts_text, keep_clock_colons)."""
     now = get_ist_now()
@@ -2217,7 +2338,7 @@ async def generate_answer(heard: str, lang: str) -> Tuple[str, str, str, bool]:
         period_ur = format_urdu_period_and_time(now)
         if lang == "UR":
             disp = f"Waqt {t_12}. Date {d_en}. Hijri {hijri_en}."
-            tts = f"ابھی {period_ur}۔ آج تاریخ {d_en} ہے، اور ہجری تاریخ {hijri_ur} ہے۔"
+            tts = f"ابھی {period_ur}۔ آج تاریخ {format_urdu_gregorian_date(now)} ہے، اور ہجری تاریخ {hijri_ur} ہے۔"
             return "TIME", disp, tts, True
         ans = f"It is {t_12} on {d_en}. Hijri date is {hijri_en}."
         return "TIME", ans, ans, True
@@ -2231,18 +2352,17 @@ async def generate_answer(heard: str, lang: str) -> Tuple[str, str, str, bool]:
                 extra_d = f" ({cond_en})" if cond_en else ""
                 extra_t = f" اور {cond_ur}" if cond_ur else ""
                 disp = f"{place}: {temp} C, hawa {wind} kmh{extra_d}."
-                tts = f"{place} میں ابھی درجہ حرارت {temp} ڈگری سینٹی گریڈ، ہَوا کی رفتار {wind} کلومیٹر فی گھنٹہ{extra_t} ہے۔"
+                tts = f"{urdu_place_name(place)} میں ابھی درجہ حرارت {temp} ڈگری سینٹی گریڈ، ہَوا کی رفتار {wind} کلومیٹر فی گھنٹہ{extra_t} ہے۔"
                 return "WEATHER", disp, tts, False
             extra_en = f" with {cond_en}" if cond_en else ""
             ans = f"In {place}, it is currently {temp} degrees Celsius with wind at {wind} kilometers per hour{extra_en}."
             return "WEATHER", ans, ans, False
-        # Never let LLM hallucinate fake weather if live API fails
         if lang == "UR":
-            return "WEATHER", f"{place} ka live mausam abhi load nahi ho saka.", f"{place} کا لائیو موسم ابھی لوڈ نہیں ہو سکا۔ تھوڑی دیر بعد دوبارہ کوشش کریں۔", False
+            return "WEATHER", f"{place} ka live mausam abhi load nahi ho saka.", f"{urdu_place_name(place)} کا لائیو موسم ابھی لوڈ نہیں ہو سکا۔ تھوڑی دیر بعد دوبارہ کوشش کریں۔", False
         return "WEATHER", f"Could not fetch live weather for {place} right now.", f"Could not fetch live weather for {place} right now. Please try again shortly.", False
 
     if is_cricket_query(heard):
-        headlines = await fetch_cricket_context(heard)
+        headlines = await fetch_cricket_context(heard, lang)
         if headlines:
             sys_p = (
                 f"You are a clear, direct live cricket presenter. Today is {now.strftime('%d %b %Y, %I:%M %p')}. "
@@ -2252,8 +2372,15 @@ async def generate_answer(heard: str, lang: str) -> Tuple[str, str, str, bool]:
             res = await call_groq_bilingual(sys_p, usr_p, lang, length_mode)
             if res:
                 return "CRICKET", res[0], res[1], False
-            fb = clean_ascii(". ".join(headlines[:2]))[:260]
-            return "CRICKET", fb, fb, False
+            fb, fb_tts = headline_fallback(headlines, lang)
+            return "CRICKET", fb, fb_tts, False
+        if lang == "UR":
+            fail_d = "Cricket ki taza feed abhi dastiyab nahi; score verify nahi ho saka."
+            fail_t = "کرکٹ کی تازہ فیڈ ابھی دستیاب نہیں، اس لیے میں اسکور کی تصدیق نہیں کر سکا۔ تھوڑی دیر بعد دوبارہ کوشش کریں۔"
+        else:
+            fail_d = "The live cricket feed is unavailable, so I could not verify the current score."
+            fail_t = fail_d + " Please try again shortly."
+        return "CRICKET", fail_d, fail_t, False
 
     if is_news_query(heard):
         headlines = await fetch_news_context(heard, lang)
@@ -2267,8 +2394,15 @@ async def generate_answer(heard: str, lang: str) -> Tuple[str, str, str, bool]:
             res = await call_groq_bilingual(sys_p, usr_p, lang, "normal")
             if res:
                 return "NEWS", res[0], res[1], False
-            fb = clean_ascii(". ".join(headlines[:2]))[:240]
-            return "NEWS", fb, fb, False
+            fb, fb_tts = headline_fallback(headlines, lang)
+            return "NEWS", fb, fb_tts, False
+        if lang == "UR":
+            fail_d = "Taza khabron ki feed abhi load nahi hui; main ghair-tasdeeq-shuda khabar nahi bataunga."
+            fail_t = "تازہ خبروں کی فیڈ ابھی لوڈ نہیں ہوئی، اس لیے میں غیر مصدقہ خبر نہیں بتاؤں گا۔ تھوڑی دیر بعد دوبارہ کوشش کریں۔"
+        else:
+            fail_d = "The live news feed did not load, so I will not guess or present unverified headlines."
+            fail_t = fail_d + " Please try again shortly."
+        return "NEWS", fail_d, fail_t, False
 
     # Zero-hallucination core Hanafi Masayil & Arabic Grammar check
     verified = get_verified_core_answer(heard, lang)
@@ -2303,7 +2437,7 @@ async def generate_answer(heard: str, lang: str) -> Tuple[str, str, str, bool]:
     if res:
         return "ANSWER", res[0], res[1], False
 
-    disp, tts = await wiki_fallback(heard)
+    disp, tts = await wiki_fallback(heard, lang)
     return "INFO", disp, tts, False
 
 
@@ -2324,17 +2458,38 @@ async def root():
 async def get_audio(fid: str):
     if fid.endswith(".mp3"):
         fid = fid[:-4]
-    safe_id = re.sub(r"[^a-zA-Z0-9_]", "", fid)
-    fp = os.path.join(AUDIO_DIR, f"{safe_id}.mp3")
+    if not (
+        re.fullmatch(r"[a-fA-F0-9]{8,32}", fid)
+        or re.fullmatch(r"seerat_ch(?:0[1-9]|1[0-9]|20)_(?:ur|en)", fid)
+        or re.fullmatch(r"seerat_v2_ch(?:0[1-9]|1[0-9]|20)_(?:ur|en)", fid)
+        or re.fullmatch(r"seerat_v3_ch(?:0[1-9]|1[0-9]|20)_(?:ur|en)", fid)
+    ):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    fp = os.path.join(AUDIO_DIR, f"{fid}.mp3")
     if os.path.exists(fp) and os.path.getsize(fp) > 200:
-        return FileResponse(fp, media_type="audio/mpeg", filename=f"{safe_id}.mp3")
+        return FileResponse(fp, media_type="audio/mpeg", filename=f"{fid}.mp3")
     return JSONResponse({"error": "not found"}, status_code=404)
 
 
 @app.post("/chat")
 async def chat(request: Request):
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > 15 * 1024 * 1024:
+                return JSONResponse({"error": "Audio upload too large (15 MB maximum)."}, status_code=413)
+        except ValueError:
+            return JSONResponse({"error": "Invalid Content-Length header."}, status_code=400)
     wav_bytes = await request.body()
-    heard = await transcribe_wav(wav_bytes)
+    if not wav_bytes:
+        return JSONResponse({"error": "Empty audio upload."}, status_code=400)
+    if len(wav_bytes) > 15 * 1024 * 1024:
+        return JSONResponse({"error": "Audio upload too large (15 MB maximum)."}, status_code=413)
+    try:
+        heard = await transcribe_wav(wav_bytes)
+    except Exception as exc:
+        print(f"Transcription failed: {type(exc).__name__}: {exc}")
+        return JSONResponse({"error": "Speech recognition is temporarily unavailable. Please try again."}, status_code=503)
     print(f"Heard: {heard}")
 
     if not heard:
@@ -2381,7 +2536,7 @@ async def chat(request: Request):
     # 2) UNMUTE / MUTE
     if word_count <= 5 and has_word(low, ["unmute", "awaaz chalu", "sound on", "آواز چالو"]):
         STATE["volume"] = max(4, STATE.get("last_nonzero_volume", 11))
-        msg_d = f"Volume {STATE['volume']} chalu ho gaya."
+        msg_d = f"Volume {STATE['volume']} chalu ho gaya." if lang == "UR" else f"Unmuted. Volume {STATE['volume']}."
         msg_t = f"آواز چالو کر دی گئی ہے، والیوم {STATE['volume']} ہے۔" if lang == "UR" else f"Unmuted. Volume is {STATE['volume']}."
         audio_url, total_ms = await make_tts_with_duration(msg_t, voice_code)
         return {
@@ -2415,7 +2570,7 @@ async def chat(request: Request):
     # 3) CLEAR HISTORY
     if word_count <= 6 and has_word(low, ["clear history", "reset chat", "history clear", "nayi baat", "naya chat", "ہسٹری صاف"]):
         clear_history()
-        msg_d = "Purani chat history saaf ho gayi."
+        msg_d = "Purani chat history saaf ho gayi." if lang == "UR" else "Chat history cleared."
         msg_t = "پرانی چیٹ ہسٹری صاف کر دی گئی ہے۔" if lang == "UR" else "Chat history cleared."
         audio_url, total_ms = await make_tts_with_duration(msg_t, voice_code)
         return {
@@ -2433,14 +2588,15 @@ async def chat(request: Request):
 
     # 4) VOLUME
     if word_count <= 7 and not has_word(low, ["cube", "cylinder", "sphere", "cone", "formula", "calculate", "area", "math", "physics", "liter", "litre"]):
+        volume_text = replace_number_words(low)
         m_vol = re.search(
             r"(?:volume|awaaz|آواز)(?:\s+(?:ko|set|to|at|on|par|pe|karo|krdo|kardo|rakh|rakho)){0,3}\s+(\d{1,2})\b",
-            low,
+            volume_text,
         )
         if m_vol:
             STATE["volume"] = max(2, min(16, int(m_vol.group(1))))
             STATE["last_nonzero_volume"] = STATE["volume"]
-            msg_d = f"Volume {STATE['volume']} set ho gaya."
+            msg_d = f"Volume {STATE['volume']} set ho gaya." if lang == "UR" else f"Volume set to {STATE['volume']}."
             msg_t = f"والیوم {STATE['volume']} سیٹ ہو گیا ہے۔" if lang == "UR" else f"Volume set to {STATE['volume']}."
             audio_url, total_ms = await make_tts_with_duration(msg_t, voice_code)
             return {
@@ -2459,7 +2615,7 @@ async def chat(request: Request):
     if has_word(low, ["volume up", "awaaz badhao", "awaaz tej", "awaaz tez", "louder", "increase volume", "آواز بڑھاؤ", "آواز تیز"]):
         STATE["volume"] = min(16, max(2, STATE["volume"]) + 2)
         STATE["last_nonzero_volume"] = STATE["volume"]
-        msg_d = f"Volume badha kar {STATE['volume']} kar diya."
+        msg_d = f"Volume badha kar {STATE['volume']} kar diya." if lang == "UR" else f"Volume increased to {STATE['volume']}."
         msg_t = f"والیوم بڑھا کر {STATE['volume']} کر دیا ہے۔" if lang == "UR" else f"Volume increased to {STATE['volume']}."
         audio_url, total_ms = await make_tts_with_duration(msg_t, voice_code)
         return {
@@ -2478,7 +2634,7 @@ async def chat(request: Request):
     if has_word(low, ["volume down", "awaaz kam", "softer", "quieter", "decrease volume", "آواز کم"]):
         STATE["volume"] = max(3, STATE["volume"] - 2)
         STATE["last_nonzero_volume"] = STATE["volume"]
-        msg_d = f"Volume kam kar ke {STATE['volume']} kar diya."
+        msg_d = f"Volume kam kar ke {STATE['volume']} kar diya." if lang == "UR" else f"Volume decreased to {STATE['volume']}."
         msg_t = f"والیوم کم کر کے {STATE['volume']} کر دیا ہے۔" if lang == "UR" else f"Volume decreased to {STATE['volume']}."
         audio_url, total_ms = await make_tts_with_duration(msg_t, voice_code)
         return {
@@ -2497,7 +2653,7 @@ async def chat(request: Request):
     # 5) SPEED
     if word_count <= 6 and has_word(low, ["slow bolo", "speed slow", "slow speed", "dheere bolo", "ahista bolo", "speak slowly", "آہستہ بولو", "دھیرے بولو"]):
         STATE["speed"] = "Slow"
-        msg_d = "Speed slow set ho gayi."
+        msg_d = "Speed slow set ho gayi." if lang == "UR" else "Speaking speed set to slow."
         msg_t = "اب میں آہستہ بولوں گا۔" if lang == "UR" else "I will speak slowly now."
         audio_url, total_ms = await make_tts_with_duration(msg_t, voice_code)
         return {
@@ -2515,7 +2671,7 @@ async def chat(request: Request):
 
     if word_count <= 6 and has_word(low, ["fast bolo", "speed fast", "fast speed", "tez bolo", "jaldi bolo", "speak fast", "تیز بولو"]):
         STATE["speed"] = "Fast"
-        msg_d = "Speed fast set ho gayi."
+        msg_d = "Speed fast set ho gayi." if lang == "UR" else "Speaking speed set to fast."
         msg_t = "اب میں تھوڑا تیز بولوں گا۔" if lang == "UR" else "I will speak faster now."
         audio_url, total_ms = await make_tts_with_duration(msg_t, voice_code)
         return {
@@ -2533,7 +2689,7 @@ async def chat(request: Request):
 
     if word_count <= 6 and has_word(low, ["normal speed", "speed normal", "normal bolo", "نارمل سپیڈ"]):
         STATE["speed"] = "Norm"
-        msg_d = "Speed normal set ho gayi."
+        msg_d = "Speed normal set ho gayi." if lang == "UR" else "Speaking speed set to normal."
         msg_t = "سپیڈ نارمل کر دی گئی ہے۔" if lang == "UR" else "Speaking speed set to normal."
         audio_url, total_ms = await make_tts_with_duration(msg_t, voice_code)
         return {
@@ -2553,7 +2709,7 @@ async def chat(request: Request):
     if has_word(low, ["monster", "monister", "animation", "chehra", "face", "مونسٹر", "چہرہ"]):
         if has_word(low, ["off", "band", "close", "hatao", "hide", "home", "بند", "ہٹاؤ"]):
             STATE["monster"] = False
-            msg_d = "Monster face band ho gaya."
+            msg_d = "Monster face band ho gaya." if lang == "UR" else "Monster face turned off."
             msg_t = "مونسٹر فیس بند کر دیا گیا ہے۔" if lang == "UR" else "Monster face turned off."
             audio_url, total_ms = await make_tts_with_duration(msg_t, voice_code)
             return {
@@ -2569,7 +2725,7 @@ async def chat(request: Request):
             }
         if has_word(low, ["on", "kholo", "open", "dikhao", "chalu", "start", "show", "کھولو", "دکھاؤ", "چالو"]):
             STATE["monster"] = True
-            msg_d = "Monster face chalu ho gaya."
+            msg_d = "Monster face chalu ho gaya." if lang == "UR" else "Monster face turned on."
             msg_t = "مونسٹر فیس آن کر دیا گیا ہے۔" if lang == "UR" else "Monster face turned on."
             audio_url, total_ms = await make_tts_with_duration(msg_t, voice_code)
             return {
@@ -2659,33 +2815,53 @@ async def chat(request: Request):
         lbl, audio_rel, exact_ms, script_txt = await build_seerat_chapter_narration_mp3(ch_num, s_lang)
         s_voice = "EN-M" if s_lang == "EN" else "UR-M"
         STATE["voice"] = s_voice
-        append_history({
-            "u": heard_norm,
-            "a": f"Ar-Raheeq Al-Makhtum Chapter {ch_num} ({en_title}): {script_txt[:220]}",
-            "surah_num": None,
-            "last_ayah": None,
-            "seerat_chapter": ch_num,
-        })
-        if audio_rel:
+        if script_txt.startswith("__SEERAT_ERROR__:"):
+            error_text = script_txt.split(":", 1)[1]
+            error_audio, error_ms = await make_tts_with_duration(error_text, s_voice)
+            disp_err = clean_ascii(error_text) if s_lang == "EN" else urdu_to_roman_fallback(error_text)
             return {
-                "action": "STREAM",
+                "action": "SPEAK",
                 "lang": s_lang,
-                "header": lbl,
-                "title": f"{lbl} {en_title[:10]}",
-                "url": f"{_public_base_url(request)}{audio_rel}",
+                "header": "SEERAT ERROR",
+                "heard": clean_ascii(heard_norm)[:16],
+                "display": disp_err,
+                "pages": build_synced_pages(disp_err, error_ms, s_lang),
+                "audio_url": error_audio,
                 "voice": s_voice,
                 "volume": STATE["volume"],
                 "monster": STATE["monster"],
             }
-        disp_fb = f"Ar-Raheeq Ch {ch_num}: {en_title}."
+        if not audio_rel:
+            disp_no_audio = (
+                "Seerat audio could not be prepared; please retry."
+                if s_lang == "EN"
+                else "Seerat audio tayyar nahi ho saki, dobara koshish karein."
+            )
+            return {
+                "action": "SPEAK",
+                "lang": s_lang,
+                "header": "SEERAT AUDIO",
+                "heard": clean_ascii(heard_norm)[:16],
+                "display": disp_no_audio,
+                "pages": build_synced_pages(disp_no_audio, 2500, s_lang),
+                "audio_url": "",
+                "voice": s_voice,
+                "volume": STATE["volume"],
+                "monster": STATE["monster"],
+            }
+        append_history({
+            "u": heard_norm,
+            "a": f"Ar-Raheeq study narration chapter {ch_num} ({en_title})",
+            "surah_num": None,
+            "last_ayah": None,
+            "seerat_chapter": ch_num,
+        })
         return {
-            "action": "SPEAK",
+            "action": "STREAM",
             "lang": s_lang,
             "header": lbl,
-            "heard": clean_ascii(heard_norm)[:16],
-            "display": disp_fb,
-            "pages": build_synced_pages(disp_fb, exact_ms, s_lang),
-            "audio_url": "",
+            "title": f"{lbl} {en_title[:10]}",
+            "url": f"{_public_base_url(request)}{audio_rel}",
             "voice": s_voice,
             "volume": STATE["volume"],
             "monster": STATE["monster"],
